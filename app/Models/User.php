@@ -95,4 +95,10 @@ class User extends Authenticatable
     {
         return $this->belongsTo(Service::class);
     }
+
+    public function personnel()
+    {
+        return $this->hasOne(\App\Models\Personnel::class);
+    }
+
 }
