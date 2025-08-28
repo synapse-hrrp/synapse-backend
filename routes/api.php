@@ -7,25 +7,26 @@ use App\Http\Controllers\Api\Admin\PersonnelController;
 
 Route::prefix('v1')->group(function () {
 
+    // Auth (publiques pour login)
     Route::post('auth/login', [AuthController::class, 'login']);
 
+    // Auth (protégées)
     Route::middleware('auth:sanctum')->group(function () {
         Route::post('auth/logout', [AuthController::class, 'logout']);
-        Route::get('auth/me', [AuthController::class, 'me']);
+        Route::get('auth/me',     [AuthController::class, 'me']);
     });
 
-    // ⬇️ Enlève "role:admin" ici pour l’instant
-    Route::middleware(['auth:sanctum'])->prefix('admin')->group(function () {
-        Route::get('users',  [UserManagementController::class, 'index']);
-        Route::post('users', [UserManagementController::class, 'store']);
-    });
-
-
-    Route::middleware(['auth:sanctum', 'role:admin'])
-        ->prefix('v1/admin')
+    // Admin (protégé par Sanctum + rôle admin) => /api/v1/admin/...
+    Route::prefix('admin')
+        ->middleware(['auth:sanctum', 'role:admin'])
         ->group(function () {
-            Route::apiResource('personnels', PersonnelController::class)->parameters([
-                'personnels' => 'personnel'
-            ]);
+
+            // Users (REST complet)
+            Route::apiResource('users', UserManagementController::class)
+                ->parameters(['users' => 'user']);
+
+            // Personnels (REST complet)
+            Route::apiResource('personnels', PersonnelController::class)
+                ->parameters(['personnels' => 'personnel']);
         });
 });
