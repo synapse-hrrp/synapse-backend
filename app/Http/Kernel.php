@@ -6,13 +6,9 @@ use Illuminate\Foundation\Http\Kernel as HttpKernel;
 
 class Kernel extends HttpKernel
 {
-    /**
-     * Global HTTP middleware exécutés à chaque requête.
-     * @var array<int, class-string|string>
-     */
     protected $middleware = [
         \App\Http\Middleware\TrustProxies::class,
-        \Illuminate\Http\Middleware\TrustHosts::class, // optionnel mais recommandé
+        \Illuminate\Http\Middleware\TrustHosts::class,
         \Illuminate\Http\Middleware\HandleCors::class,
         \Illuminate\Foundation\Http\Middleware\ValidatePostSize::class,
         \App\Http\Middleware\TrimStrings::class,
@@ -20,10 +16,6 @@ class Kernel extends HttpKernel
         \Illuminate\Foundation\Http\Middleware\PreventRequestsDuringMaintenance::class,
     ];
 
-    /**
-     * Groupes de middleware (web/api).
-     * @var array<string, array<int, class-string|string>>
-     */
     protected $middlewareGroups = [
         'web' => [
             \App\Http\Middleware\EncryptCookies::class,
@@ -33,28 +25,9 @@ class Kernel extends HttpKernel
             \App\Http\Middleware\VerifyCsrfToken::class,
             \Illuminate\Routing\Middleware\SubstituteBindings::class,
         ],
-
         'api' => [
-            \Illuminate\Routing\Middleware\ThrottleRequests::class.':api',
+            \Illuminate\Routing\Middleware\ThrottleRequests::class . ':api',
             \Illuminate\Routing\Middleware\SubstituteBindings::class,
         ],
-    ];
-
-    /**
-     * Alias de middleware utilisables dans les routes.
-     * @var array<string, class-string|string>
-     */
-    protected $middlewareAliases = [
-        // Laravel
-        'auth'               => \App\Http\Middleware\Authenticate::class,
-        'auth.basic'         => \Illuminate\Auth\Middleware\AuthenticateWithBasicAuth::class,
-        'cache.headers'      => \Illuminate\Http\Middleware\SetCacheHeaders::class,
-        'can'                => \Illuminate\Auth\Middleware\Authorize::class,
-        'guest'              => \App\Http\Middleware\RedirectIfAuthenticated::class,
-        'password.confirm'   => \Illuminate\Auth\Middleware\RequirePassword::class,
-        'signed'             => \Illuminate\Routing\Middleware\ValidateSignature::class,
-        'throttle'           => \Illuminate\Routing\Middleware\ThrottleRequests::class,
-        'verified'           => \Illuminate\Auth\Middleware\EnsureEmailIsVerified::class,
-
     ];
 }

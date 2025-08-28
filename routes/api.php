@@ -15,12 +15,19 @@ Route::prefix('v1')->group(function () {
         Route::get('auth/me',     [AuthController::class, 'me']);
     });
 
-    // ❗ ICI: alias 'role:admin' (pas la classe)
-    Route::middleware(['auth:sanctum', 'role:admin'])->prefix('admin')->group(function () {
-        Route::get('users',  [UserManagementController::class, 'index']);
-        Route::post('users', [UserManagementController::class, 'store']);
-    });
+    // Admin (protégé par Sanctum + rôle admin) => /api/v1/admin/...
+    Route::prefix('admin')
+        ->middleware(['auth:sanctum', 'role:admin'])
+        ->group(function () {
 
+            // Users (REST complet)
+            Route::apiResource('users', UserManagementController::class)
+                ->parameters(['users' => 'user']);
+
+            // Personnels (REST complet)
+            Route::apiResource('personnels', PersonnelController::class)
+                ->parameters(['personnels' => 'personnel']);
+        });
 
     // Patients (toutes versionnées sous /api/v1/patients)
     Route::middleware(['auth:sanctum'])->group(function () {
