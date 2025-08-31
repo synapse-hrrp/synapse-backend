@@ -18,7 +18,7 @@ class UserManagementController extends Controller
     {
         $q = User::query()
             ->with('roles:id,name') // charger les rôles
-            ->select('id','name','email','phone','is_active','service_id','created_at')
+            ->select('id','name','email','phone','is_active','created_at')
             ->when($request->search, fn($qq,$s)=>$qq->search($s))
             // Filtre optionnel par rôle: /api/v1/admin/users?role=admin
             ->when($request->filled('role'), function ($qq) use ($request) {
@@ -36,7 +36,7 @@ class UserManagementController extends Controller
                 'email'      => $u->email,
                 'phone'      => $u->phone,
                 'is_active'  => $u->is_active,
-                'service_id' => $u->service_id,
+                //'service_id' => $u->service_id,
                 'created_at' => $u->created_at,
                 'roles'      => $u->roles->pluck('name')->values(),
                 'is_admin'   => $u->hasAnyRole(['admin','dg']),
@@ -58,7 +58,6 @@ class UserManagementController extends Controller
             'password'              => ['required', Password::min(8)],
             'password_confirmation' => ['required','same:password'],
             'phone'                 => ['nullable','string','max:30'],
-            'service_id'            => ['nullable','integer','exists:services,id'],
             'roles'                 => ['nullable','array'],
             'roles.*'               => ['string','exists:roles,name'],
         ]);
@@ -68,7 +67,6 @@ class UserManagementController extends Controller
             'email'      => $data['email'],
             'password'   => Hash::make($data['password']),
             'phone'      => $data['phone'] ?? null,
-            'service_id' => $data['service_id'] ?? null,
             'is_active'  => true,
         ]);
 
@@ -103,7 +101,6 @@ class UserManagementController extends Controller
             'name'       => ['sometimes','string','max:255'],
             'email'      => ['sometimes','email','max:255','unique:users,email,'.$user->id],
             'phone'      => ['nullable','string','max:30'],
-            'service_id' => ['nullable','integer','exists:services,id'],
             'is_active'  => ['sometimes','boolean'],
             'password'   => ['nullable', Password::min(8)],
             'roles'      => ['nullable','array'],

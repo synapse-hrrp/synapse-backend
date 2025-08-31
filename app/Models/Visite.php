@@ -19,7 +19,7 @@ class Visite extends Model
         'plaintes_motif','hypothese_diagnostic',
         'affectation_id','statut','clos_at',
         // pricing (si colonnes ajoutées)
-        'tarif_id','montant_prevu','remise_pct','montant_du','devise','statut_paiement','motif_gratuite','facture_id',
+        //'tarif_id','montant_prevu','remise_pct','montant_du','devise','statut_paiement','motif_gratuite','facture_id',
 
         // (option) snapshot du code si tu as ajouté une colonne service_code SANS FK
         // 'service_code',

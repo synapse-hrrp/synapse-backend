@@ -5,16 +5,13 @@ namespace App\Models;
 use Illuminate\Database\Eloquent\Factories\HasFactory;
 use Illuminate\Foundation\Auth\User as Authenticatable;
 use Illuminate\Notifications\Notifiable;
-use Laravel\Sanctum\HasApiTokens; // ← décommente quand Sanctum sera installé
-use Spatie\Permission\Traits\HasRoles; // 👈 IMPORTANT
+use Laravel\Sanctum\HasApiTokens;
+use Spatie\Permission\Traits\HasRoles;
 
 class User extends Authenticatable
 {
-    use HasApiTokens, HasFactory, Notifiable, HasRoles;  // 👈 AJOUT HasApiTokens
-    /**
-     * Attributs assignables en masse.
-     * @var array<int, string>
-     */
+    use HasApiTokens, HasFactory, Notifiable, HasRoles;
+
     protected $fillable = [
         'name',
         'email',
@@ -23,29 +20,13 @@ class User extends Authenticatable
         'is_active',
         'last_login_at',
         'last_login_ip',
-        'service_id',
+        // ❌ plus de service_id ici
     ];
 
-    /**
-     * Attributs masqués pour la sérialisation.
-     * @var array<int, string>
-     */
-    protected $hidden = [
-        'password',
-        'remember_token',
-    ];
+    protected $hidden = ['password','remember_token'];
 
-    /**
-     * Valeurs par défaut.
-     * @var array<string, mixed>
-     */
-    protected $attributes = [
-        'is_active' => true,
-    ];
+    protected $attributes = ['is_active' => true];
 
-    /**
-     * Casts / conversions de types.
-     */
     protected function casts(): array
     {
         return [
@@ -68,7 +49,7 @@ class User extends Authenticatable
         return $query->where('is_active', true);
     }
 
-    /** Scope : recherche simple (nom / email / téléphone). */
+    /** Scope : recherche simple (nom / email / téléphone + champs personnel). */
     public function scopeSearch($query, ?string $term)
     {
         if (!$term) return $query;
@@ -78,27 +59,23 @@ class User extends Authenticatable
         return $query->where(function ($q) use ($like) {
             $q->where('name', 'like', $like)
               ->orWhere('email', 'like', $like)
-              ->orWhere('phone', 'like', $like);
+              ->orWhere('phone', 'like', $like)
+              ->orWhereHas('personnel', function ($p) use ($like) {
+                  $p->where('first_name','like',$like)
+                    ->orWhere('last_name','like',$like)
+                    ->orWhere('matricule','like',$like)
+                    ->orWhere('cin','like',$like);
+              });
         });
     }
 
-    /** Services liés (plusieurs) via pivot service_user (avec is_primary). */
-    public function services()
-    {
-        return $this->belongsToMany(Service::class)
-            ->withTimestamps()
-            ->withPivot('is_primary');
-    }
-
-    /** Service principal (si colonne users.service_id présente). */
-    public function service()
-    {
-        return $this->belongsTo(Service::class);
-    }
-
+    /** Relation 1–1 vers la fiche RH. */
     public function personnel()
     {
         return $this->hasOne(\App\Models\Personnel::class);
     }
 
+    // ❌ On supprime:
+    // - services() (belongsToMany)
+    // - service()  (belongsTo avec users.service_id)
 }

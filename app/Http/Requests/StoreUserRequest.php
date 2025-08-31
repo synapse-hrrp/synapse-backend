@@ -30,10 +30,10 @@ class StoreUserRequest extends FormRequest
             'permissions.*'=> ['string'],
 
             // Service principal (FK) OU plusieurs services via pivot
-            'service_id'  => ['nullable','integer','exists:services,id'],
-            'services'    => ['sometimes','array'],
-            'services.*'  => ['integer','exists:services,id'],
-            'primary_service_id' => ['nullable','integer','exists:services,id'],
+            //'service_id'  => ['nullable','integer','exists:services,id'],
+            //'services'    => ['sometimes','array'],
+            //'services.*'  => ['integer','exists:services,id'],
+            //'primary_service_id' => ['nullable','integer','exists:services,id'],
         ];
     }
 }

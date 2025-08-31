@@ -17,13 +17,13 @@ class Personnel extends Model
         'sex',
         'date_of_birth',
         'cin',
-        'phone_alt',
+        'phone_alt',   // téléphone secondaire uniquement ici
         'address',
         'city',
         'country',
         'job_title',
         'hired_at',
-        'service_id',
+        'service_id',  // ✅ le service vit ici
         'avatar_path',
         'extra',
     ];
@@ -39,6 +39,7 @@ class Personnel extends Model
         return $this->belongsTo(User::class);
     }
 
+    /** Service principal de la personne. */
     public function service()
     {
         return $this->belongsTo(Service::class);
@@ -54,5 +55,11 @@ class Personnel extends Model
               ->orWhere('first_name','like',$like)
               ->orWhere('cin','like',$like)
         );
+    }
+
+    /** Petit helper pratique. */
+    public function getFullNameAttribute(): string
+    {
+        return trim(($this->first_name ?? '').' '.($this->last_name ?? ''));
     }
 }
