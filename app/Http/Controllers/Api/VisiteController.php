@@ -7,6 +7,7 @@ use App\Http\Requests\VisiteStoreRequest;
 use App\Http\Requests\VisiteUpdateRequest;
 use App\Http\Resources\VisiteResource;
 use App\Models\Visite;
+use App\Models\Personnel;
 use App\Models\Service;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
@@ -22,27 +23,29 @@ class VisiteController extends Controller
         }
 
         $data = $request->validated();
-        $data['agent_id']  = $request->user()->id;
-        $data['agent_nom'] = $request->user()->name ?? $request->user()->email;
 
-        // Ne garder QUE les colonnes réellement présentes en DB
+        // 1) Récupérer le Personnel de l'utilisateur connecté (agent)
+        $agentPersonnel = $request->user()?->personnel;
+        if (! $agentPersonnel) {
+            return response()->json([
+                'message' => 'Aucun personnel rattaché à l’utilisateur connecté.'
+            ], 422);
+        }
+        $data['agent_id']  = $agentPersonnel->id;
+        $data['agent_nom'] = $agentPersonnel->full_name
+            ?? trim(($agentPersonnel->first_name ?? '').' '.($agentPersonnel->last_name ?? ''));
+
+        // 2) Snapshot du médecin (nom) — validé par le FormRequest (service + rôle si tu l’as ajouté)
+        $medecin = Personnel::query()->whereKey($data['medecin_id'])->firstOrFail();
+        $data['medecin_nom'] = $medecin->full_name
+            ?? trim(($medecin->first_name ?? '').' '.($medecin->last_name ?? ''));
+
+        // 3) Défaut heure_arrivee si non fourni (au cas où)
+        $data['heure_arrivee'] = $data['heure_arrivee'] ?? now();
+
+        // 4) Ne garder QUE les colonnes réellement présentes en DB
         $columns = Schema::getColumnListing('visites');
         $data    = array_intersect_key($data, array_flip($columns));
-
-        // -- Normaliser / sécuriser 'statut' pour coller au schéma DB --
-        // Si ta colonne est ENUM('en cours','clos','annule') (avec espace), on convertit 'en_cours' -> 'en cours'
-        if (isset($data['statut'])) {
-            $normalized = str_replace('_', ' ', $data['statut']);
-            $allowed    = ['en cours', 'clos', 'annule']; // adapte si tes valeurs réelles diffèrent
-            if (!in_array($normalized, $allowed, true)) {
-                // valeur non reconnue → on laisse la DB mettre son DEFAULT
-                unset($data['statut']);
-            } else {
-                $data['statut'] = $normalized;
-            }
-        }
-        // heure_arrivee : valeur par défaut
-        $data['heure_arrivee'] = $data['heure_arrivee'] ?? now();
 
         $visite = DB::transaction(function () use ($data, $request) {
             $v = Visite::create($data);
@@ -70,6 +73,9 @@ class VisiteController extends Controller
         if (Schema::hasColumn('visites','tarif_id') && method_exists(Visite::class, 'tarif')) {
             $with[] = 'tarif';
         }
+        if (method_exists(Visite::class, 'affectation')) {
+            $with[] = 'affectation';
+        }
 
         return (new VisiteResource($visite->load($with)))->response()->setStatusCode(201);
     }
@@ -84,6 +90,9 @@ class VisiteController extends Controller
         $with = ['patient','service','medecin','agent'];
         if (Schema::hasColumn('visites','tarif_id') && method_exists(Visite::class, 'tarif')) {
             $with[] = 'tarif';
+        }
+        if (method_exists(Visite::class, 'affectation')) {
+            $with[] = 'affectation';
         }
 
         $q = Visite::with($with)
@@ -127,6 +136,9 @@ class VisiteController extends Controller
         if (Schema::hasColumn('visites','tarif_id') && method_exists(Visite::class, 'tarif')) {
             $with[] = 'tarif';
         }
+        if (method_exists(Visite::class, 'affectation')) {
+            $with[] = 'affectation';
+        }
 
         $v = Visite::with($with)->findOrFail($id);
         return new VisiteResource($v);
@@ -142,7 +154,7 @@ class VisiteController extends Controller
         $v = Visite::findOrFail($id);
         $data = $request->validated();
 
-        // Gérer la clôture selon la colonne existante (clos_at / closed_at)
+        // Clôture : auto-renseigner clos_at/closed_at si statut passe à 'clos'
         if (($data['statut'] ?? null) === 'clos') {
             if (Schema::hasColumn('visites','clos_at') && !$v->clos_at && !isset($data['clos_at'])) {
                 $data['clos_at'] = now();
@@ -152,7 +164,7 @@ class VisiteController extends Controller
             }
         }
 
-        // Ne mettre à jour que ce qui existe en base
+        // Ne mettre à jour que les colonnes existantes
         $columns = Schema::getColumnListing('visites');
         $data    = array_intersect_key($data, array_flip($columns));
 
@@ -161,6 +173,9 @@ class VisiteController extends Controller
         $with = ['patient','service','medecin','agent'];
         if (Schema::hasColumn('visites','tarif_id') && method_exists(Visite::class, 'tarif')) {
             $with[] = 'tarif';
+        }
+        if (method_exists(Visite::class, 'affectation')) {
+            $with[] = 'affectation';
         }
 
         return new VisiteResource($v->fresh($with));

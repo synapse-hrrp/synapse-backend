@@ -11,42 +11,45 @@ class VisiteResource extends JsonResource
         return [
             'id' => $this->id,
 
-            'patient' => [
+            // Patient (affiche les infos détaillées si la relation est chargée)
+            'patient' => $this->when($this->relationLoaded('patient') || $this->patient_id, [
                 'id'             => $this->patient_id,
-                'numero_dossier' => $this->patient->numero_dossier ?? null,
-                'nom'            => $this->patient->nom ?? null,
-                'prenom'         => $this->patient->prenom ?? null,
-                'age'            => $this->patient->age ?? null,
-                'sexe'           => $this->patient->sexe ?? null,
-            ],
+                'numero_dossier' => $this->whenLoaded('patient', fn()=> $this->patient?->numero_dossier),
+                'nom'            => $this->whenLoaded('patient', fn()=> $this->patient?->nom),
+                'prenom'         => $this->whenLoaded('patient', fn()=> $this->patient?->prenom),
+                'age'            => $this->whenLoaded('patient', fn()=> $this->patient?->age),
+                'sexe'           => $this->whenLoaded('patient', fn()=> $this->patient?->sexe),
+            ]),
 
-            // ⬇️ Basé sur service_id + relation service (code/nom en lecture)
+            // Service (code/nom via relation si chargée)
             'service' => [
                 'id'   => $this->service_id,
-                'code' => $this->service?->code, // null-safe
-                'nom'  => $this->service?->nom,
-                // (option) si tu as conservé un snapshot sans FK :
-                // 'code_snapshot' => $this->service_code ?? null,
+                'code' => $this->whenLoaded('service', fn()=> $this->service?->code),
+                'name' => $this->whenLoaded('service', fn()=> $this->service?->name),
             ],
 
+            // Médecin : snapshot prioritaire, sinon relation personnels.full_name
             'medecin' => [
                 'id'  => $this->medecin_id,
-                'nom' => $this->medecin_nom ?? ($this->medecin->name ?? null),
+                'nom' => $this->medecin_nom
+                    ?? $this->whenLoaded('medecin', fn()=> $this->medecin?->full_name),
             ],
 
+            // Agent : snapshot prioritaire, sinon relation personnels.full_name
             'agent' => [
                 'id'  => $this->agent_id,
-                'nom' => $this->agent_nom,
+                'nom' => $this->agent_nom
+                    ?? $this->whenLoaded('agent', fn()=> $this->agent?->full_name),
             ],
 
-            'heure_arrivee'         => $this->heure_arrivee?->toISOString(),
-            'plaintes_motif'        => $this->plaintes_motif,
-            'hypothese_diagnostic'  => $this->hypothese_diagnostic,
-            'affectation_id'        => $this->affectation_id,
-            'statut'                => $this->statut,
-            'clos_at'               => $this->clos_at?->toISOString(),
+            'heure_arrivee'        => $this->heure_arrivee?->toISOString(),
+            'plaintes_motif'       => $this->plaintes_motif,
+            'hypothese_diagnostic' => $this->hypothese_diagnostic,
+            'affectation_id'       => $this->affectation_id,
+            'statut'               => $this->statut,
+            'clos_at'              => $this->clos_at?->toISOString(),
 
-            // Bloc prix (rendu uniquement si colonnes présentes)
+            // Bloc prix (uniquement si colonnes/relations présentes)
             'prix' => [
                 'tarif' => $this->whenLoaded('tarif', fn () => [
                     'code'    => $this->tarif->code,
