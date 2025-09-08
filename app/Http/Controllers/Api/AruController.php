@@ -1,0 +1,166 @@
+<?php
+
+namespace App\Http\Controllers\Api;
+
+use App\Http\Controllers\Controller;
+use App\Http\Requests\AruStoreRequest;
+use App\Http\Requests\AruUpdateRequest;
+use App\Http\Resources\AruResource;
+use App\Models\Aru;
+use App\Models\Visite;
+use Illuminate\Http\Request;
+
+class AruController extends Controller
+{
+    // GET /api/v1/aru
+    // Filtres: ?patient_id=…&statut=…&q=…&sort=-date_acte&limit=20
+    // Corbeille: ?only_trashed=1 | ?with_trashed=1
+    public function index(Request $request)
+    {
+        $patientId   = (string) $request->query('patient_id', '');
+        $statut      = (string) $request->query('statut', '');
+        $q           = (string) $request->query('q', '');
+        $sortRaw     = (string) $request->query('sort', '-date_acte');
+        $onlyTrashed = $request->boolean('only_trashed', false);
+        $withTrashed = $request->boolean('with_trashed', false);
+
+        $field = ltrim($sortRaw, '-');
+        $dir   = str_starts_with($sortRaw, '-') ? 'desc' : 'asc';
+        if (!in_array($field, ['date_acte','created_at','statut'], true)) {
+            $field = 'date_acte';
+        }
+
+        $query = Aru::query()
+            ->when($onlyTrashed, fn($q) => $q->onlyTrashed())
+            ->when(!$onlyTrashed && $withTrashed, fn($q) => $q->withTrashed())
+            ->with(['patient','visite','soignant:id,name,email'])
+            ->when($patientId !== '', fn($q2) => $q2->where('patient_id', $patientId))
+            ->when($statut !== '', fn($q2) => $q2->where('statut', $statut))
+            ->when($q !== '', function ($q2) use ($q) {
+                $q2->where(function ($b) use ($q) {
+                    $b->where('motif','like',"%{$q}%")
+                      ->orWhere('examens_complementaires','like',"%{$q}%")
+                      ->orWhere('traitements','like',"%{$q}%")
+                      ->orWhere('observation','like',"%{$q}%");
+                });
+            })
+            ->orderBy($field, $dir);
+
+        $perPage = min(max((int)$request->query('limit', 20), 1), 200);
+        $items   = $query->paginate($perPage);
+
+        return AruResource::collection($items)->additional([
+            'page'  => $items->currentPage(),
+            'limit' => $items->perPage(),
+            'total' => $items->total(),
+            'only_trashed' => $onlyTrashed,
+            'with_trashed' => $withTrashed,
+        ]);
+    }
+
+    // POST /api/v1/aru
+    public function store(AruStoreRequest $request)
+    {
+        $data = $request->validated();
+
+        // soignant = user connecté
+        if ($request->user()) {
+            $data['soignant_id'] = $request->user()->id;
+        }
+
+        // déduire la visite si absente
+        if (empty($data['visite_id'])) {
+            $data['visite_id'] = Visite::where('patient_id', $data['patient_id'])
+                ->orderByDesc('heure_arrivee')
+                ->value('id');
+        }
+
+        $data['date_acte'] = $data['date_acte'] ?? now();
+        $data['statut']    = $data['statut'] ?? 'en_cours';
+
+        $item = Aru::create($data);
+
+        return (new AruResource(
+            $item->load(['patient','visite','soignant:id,name,email'])
+        ))->response()->setStatusCode(201);
+    }
+
+    // GET /api/v1/aru/{aru}
+    public function show(Aru $aru)
+    {
+        $aru->load(['patient','visite','soignant:id,name,email']);
+        return new AruResource($aru);
+    }
+
+    // PATCH/PUT /api/v1/aru/{aru}
+    public function update(AruUpdateRequest $request, Aru $aru)
+    {
+        $data = $request->validated();
+
+        if ((!array_key_exists('visite_id',$data) || empty($data['visite_id'])) && ($data['patient_id'] ?? $aru->patient_id)) {
+            $pid = $data['patient_id'] ?? $aru->patient_id;
+            $deduced = Visite::where('patient_id', $pid)->orderByDesc('heure_arrivee')->value('id');
+            if ($deduced) $data['visite_id'] = $deduced;
+        }
+
+        $aru->fill($data)->save();
+        $aru->load(['patient','visite','soignant:id,name,email']);
+
+        return new AruResource($aru);
+    }
+
+    // DELETE /api/v1/aru/{aru} -> corbeille
+    public function destroy(Aru $aru)
+    {
+        $aru->delete();
+
+        return response()->json([
+            'message' => 'Acte d’ARU envoyé à la corbeille.',
+            'deleted' => true,
+            'id'      => $aru->id,
+        ], 200);
+    }
+
+    // GET /api/v1/aru-corbeille -> liste corbeille
+    public function trash(Request $request)
+    {
+        $perPage = min(max((int)$request->query('limit', 20), 1), 200);
+
+        $items = Aru::onlyTrashed()
+            ->with(['patient','visite','soignant:id,name,email'])
+            ->orderByDesc('deleted_at')
+            ->paginate($perPage);
+
+        return AruResource::collection($items)->additional([
+            'trash' => true,
+            'page'  => $items->currentPage(),
+            'limit' => $items->perPage(),
+            'total' => $items->total(),
+        ]);
+    }
+
+    // POST /api/v1/aru/{id}/restore -> restaure
+    public function restore(string $id)
+    {
+        $item = Aru::onlyTrashed()->findOrFail($id);
+        $item->restore();
+
+        $item->load(['patient','visite','soignant:id,name,email']);
+
+        return (new AruResource($item))
+            ->additional(['restored' => true]);
+    }
+
+    // DELETE /api/v1/aru/{id}/force -> suppression définitive
+    public function forceDestroy(string $id)
+    {
+        $item = Aru::onlyTrashed()->findOrFail($id);
+        $item->forceDelete();
+
+        return response()->json([
+            'message' => 'Acte d’ARU supprimé définitivement.',
+            'force_deleted' => true,
+            'id' => $id,
+        ]);
+    }
+}
