@@ -62,4 +62,14 @@ class Personnel extends Model
     {
         return trim(($this->first_name ?? '').' '.($this->last_name ?? ''));
     }
+
+    public function scopeMedecins($q)
+    {
+        return $q->where(function($w) {
+            $w->where('job_title', 'like', 'Médecin%')
+            ->orWhere('job_title', 'like', 'Medecin%')   // sans accent
+            ->orWhere('job_title', 'like', 'Docteur%');
+        });
+}
+
 }

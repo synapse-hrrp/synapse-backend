@@ -12,22 +12,22 @@ class Visite extends Model
     protected $table = 'visites';
 
     protected $fillable = [
-        'patient_id','service_id',             // <-- remplace service_code par service_id
+        'patient_id','service_id',
         'medecin_id','medecin_nom',
         'agent_id','agent_nom',
         'heure_arrivee',
         'plaintes_motif','hypothese_diagnostic',
         'affectation_id','statut','clos_at',
-        // pricing (si colonnes ajoutées)
-        //'tarif_id','montant_prevu','remise_pct','montant_du','devise','statut_paiement','motif_gratuite','facture_id',
 
-        // (option) snapshot du code si tu as ajouté une colonne service_code SANS FK
-        // 'service_code',
+        // Pricing minimal (aligné à la migration)
+        'tarif_id','montant_prevu','montant_du','devise',
     ];
 
     protected $casts = [
-        'heure_arrivee' => 'datetime',
-        'clos_at'       => 'datetime',
+        'heure_arrivee'   => 'datetime',
+        'clos_at'         => 'datetime',
+        'montant_prevu'   => 'decimal:2',
+        'montant_du'      => 'decimal:2',
     ];
 
     protected static function booted(): void
@@ -40,10 +40,10 @@ class Visite extends Model
 
     // Relations
     public function patient() { return $this->belongsTo(Patient::class); }
-    public function service() { return $this->belongsTo(Service::class); }  // <-- plus besoin de clés custom
+    public function service() { return $this->belongsTo(Service::class); }
     public function medecin() { return $this->belongsTo(User::class, 'medecin_id'); }
     public function agent()   { return $this->belongsTo(User::class, 'agent_id'); }
+    public function tarif()   { return $this->belongsTo(Tarif::class); }
 
     // public function affectation() { return $this->belongsTo(Affectation::class); }
-    // public function tarif()       { return $this->belongsTo(Tarif::class); }
 }

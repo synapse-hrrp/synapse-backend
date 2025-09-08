@@ -11,55 +11,56 @@ class VisiteResource extends JsonResource
         return [
             'id' => $this->id,
 
-            'patient' => [
+            // Patient
+            'patient' => $this->when($this->relationLoaded('patient') || $this->patient_id, [
                 'id'             => $this->patient_id,
-                'numero_dossier' => $this->patient->numero_dossier ?? null,
-                'nom'            => $this->patient->nom ?? null,
-                'prenom'         => $this->patient->prenom ?? null,
-                'age'            => $this->patient->age ?? null,
-                'sexe'           => $this->patient->sexe ?? null,
-            ],
+                'numero_dossier' => $this->whenLoaded('patient', fn() => $this->patient?->numero_dossier),
+                'nom'            => $this->whenLoaded('patient', fn() => $this->patient?->nom),
+                'prenom'         => $this->whenLoaded('patient', fn() => $this->patient?->prenom),
+                'age'            => $this->whenLoaded('patient', fn() => $this->patient?->age),
+                'sexe'           => $this->whenLoaded('patient', fn() => $this->patient?->sexe),
+            ]),
 
-            // ⬇️ Basé sur service_id + relation service (code/nom en lecture)
+            // Service
             'service' => [
                 'id'   => $this->service_id,
-                'code' => $this->service?->code, // null-safe
-                'nom'  => $this->service?->nom,
-                // (option) si tu as conservé un snapshot sans FK :
-                // 'code_snapshot' => $this->service_code ?? null,
+                'code' => $this->whenLoaded('service', fn() => $this->service?->code),
+                'name' => $this->whenLoaded('service', fn() => $this->service?->name),
             ],
 
+            // Médecin (snapshot prioritaire)
             'medecin' => [
                 'id'  => $this->medecin_id,
-                'nom' => $this->medecin_nom ?? ($this->medecin->name ?? null),
+                'nom' => $this->medecin_nom
+                    ?? $this->whenLoaded('medecin', fn() => $this->medecin?->full_name),
             ],
 
+            // Agent (snapshot prioritaire)
             'agent' => [
                 'id'  => $this->agent_id,
-                'nom' => $this->agent_nom,
+                'nom' => $this->agent_nom
+                    ?? $this->whenLoaded('agent', fn() => $this->agent?->full_name),
             ],
 
-            'heure_arrivee'         => $this->heure_arrivee?->toISOString(),
-            'plaintes_motif'        => $this->plaintes_motif,
-            'hypothese_diagnostic'  => $this->hypothese_diagnostic,
-            'affectation_id'        => $this->affectation_id,
-            'statut'                => $this->statut,
-            'clos_at'               => $this->clos_at?->toISOString(),
+            'heure_arrivee'        => $this->heure_arrivee?->toISOString(),
+            'plaintes_motif'       => $this->plaintes_motif,
+            'hypothese_diagnostic' => $this->hypothese_diagnostic,
+            'affectation_id'       => $this->affectation_id,
+            'statut'               => $this->statut,
+            'clos_at'              => $this->clos_at?->toISOString(),
 
-            // Bloc prix (rendu uniquement si colonnes présentes)
+            // Prix (minimal)
             'prix' => [
-                'tarif' => $this->whenLoaded('tarif', fn () => [
+                'tarif_id' => $this->tarif_id,
+                'tarif'    => $this->whenLoaded('tarif', fn () => [
                     'code'    => $this->tarif->code,
                     'libelle' => $this->tarif->libelle,
                     'montant' => (float) $this->tarif->montant,
                     'devise'  => $this->tarif->devise,
                 ]),
-                'montant_prevu'   => $this->when(isset($this->montant_prevu), (float) ($this->montant_prevu ?? 0)),
-                'remise_pct'      => $this->when(isset($this->remise_pct), (float) ($this->remise_pct ?? 0)),
-                'montant_du'      => $this->when(isset($this->montant_du), (float) ($this->montant_du ?? 0)),
-                'devise'          => $this->when(isset($this->devise), $this->devise),
-                'statut_paiement' => $this->when(isset($this->statut_paiement), $this->statut_paiement),
-                'motif_gratuite'  => $this->when(isset($this->motif_gratuite), $this->motif_gratuite),
+                'montant_prevu' => $this->when(isset($this->montant_prevu), (float) ($this->montant_prevu ?? 0)),
+                'montant_du'    => $this->when(isset($this->montant_du), (float) ($this->montant_du ?? 0)),
+                'devise'        => $this->when(isset($this->devise), $this->devise),
             ],
 
             'created_at' => $this->created_at?->toISOString(),
