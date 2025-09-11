@@ -7,6 +7,7 @@ use App\Http\Controllers\Api\AuthController;
 use App\Http\Controllers\Api\Admin\UserManagementController;
 use App\Http\Controllers\Api\Admin\PersonnelController;
 
+use App\Http\Controllers\Api\ConsultationController;
 use App\Http\Controllers\Api\PatientController;
 use App\Http\Controllers\Api\VisiteController;
 use App\Http\Controllers\Api\LaboratoireController;
@@ -104,8 +105,6 @@ Route::prefix('v1')->group(function () {
         Route::post(  'finance/payments',            [\App\Http\Controllers\Api\Finance\PaymentController::class,'store']);
     });
 
-
-   
     // ── Pediatre (/api/v1/pediatrie) ─────────────────────────────────────────────
     Route::middleware(['auth:sanctum'])->group(function () {
         // CRUD + corbeille
@@ -240,6 +239,21 @@ Route::prefix('v1')->group(function () {
         Route::get(   'bloc-operatoire-corbeille',     [BlocOperatoireController::class, 'trash'])->name('v1.bloc.trash');
         Route::post(  'bloc-operatoire/{id}/restore',  [BlocOperatoireController::class, 'restore'])->name('v1.bloc.restore');
         Route::delete('bloc-operatoire/{id}/force',    [BlocOperatoireController::class, 'forceDestroy'])->name('v1.bloc.force');
+    });
+
+    // ── consultations (/api/v1/consultations) ─────────────────────────────────────────────
+    Route::middleware(['auth:sanctum'])->group(function () {
+        Route::get(   'consultations',                 [ConsultationController::class, 'index'])->name('v1.consultations.index');
+        Route::post(  'consultations',                 [ConsultationController::class, 'store'])->name('v1.consultations.store');
+        Route::get(   'consultations/{consultation}',  [ConsultationController::class, 'show'])->name('v1.consultations.show');
+        Route::patch( 'consultations/{consultation}',  [ConsultationController::class, 'update'])->name('v1.consultations.update');
+        Route::put(   'consultations/{consultation}',  [ConsultationController::class, 'update']);
+        Route::delete('consultations/{consultation}',  [ConsultationController::class, 'destroy'])->name('v1.consultations.destroy');
+
+        // corbeille / restauration / suppression définitive
+        Route::get(   'consultations-corbeille',       [ConsultationController::class, 'trash'])->name('v1.consultations.trash');
+        Route::post(  'consultations/{id}/restore',    [ConsultationController::class, 'restore'])->name('v1.consultations.restore');
+        Route::delete('consultations/{id}/force',      [ConsultationController::class, 'forceDestroy'])->name('v1.consultations.force');
     });
 
 });

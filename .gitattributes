@@ -1,11 +1,12 @@
-* text=auto eol=lf
+# Normalisation des fins de lignes
+* text=auto
 
-*.blade.php diff=html
-*.css diff=css
-*.html diff=html
-*.md diff=markdown
-*.php diff=php
-
-/.github export-ignore
-CHANGELOG.md export-ignore
-.styleci.yml export-ignore
+# Toujours LF pour les fichiers sensibles
+*.php text eol=lf
+*.js text eol=lf
+*.css text eol=lf
+*.blade.php text eol=lf
+*.vue text eol=lf
+*.sh text eol=lf
+*.yml text eol=lf
+*.yaml text eol=lf
