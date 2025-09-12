@@ -1,5 +1,6 @@
 <?php
 
+// App/Models/Service.php
 namespace App\Models;
 
 use Illuminate\Database\Eloquent\Model;
@@ -10,14 +11,21 @@ class Service extends Model
     use HasFactory;
 
     protected $fillable = ['slug','name','code','is_active'];
+    protected $casts = [
+        'is_active' => 'boolean',
+    ];
 
-    // utilisateurs rattachés (0..N)
+    // Route-model binding via slug (/services/{slug})
+    public function getRouteKeyName()
+    {
+        return 'slug';
+    }
+
     public function users()
     {
         return $this->belongsToMany(User::class)->withTimestamps()->withPivot('is_primary');
     }
 
-    // utilisateurs dont c’est le service principal (si colonne users.service_id utilisée)
     public function primaryUsers()
     {
         return $this->hasMany(User::class);

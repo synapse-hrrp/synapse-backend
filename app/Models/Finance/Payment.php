@@ -27,7 +27,7 @@ class Payment extends Model
     {
         static::creating(function (self $m) {
             if (!$m->id)            $m->id = (string) Str::uuid();
-            if (!$m->devise)        $m->devise = 'XOF';
+            if (!$m->devise)        $m->devise = 'XAF';
             if (!$m->date_paiement) $m->date_paiement = now();
         });
 

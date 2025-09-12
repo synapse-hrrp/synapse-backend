@@ -6,6 +6,8 @@ use Illuminate\Support\Facades\Route;
 use App\Http\Controllers\Api\AuthController;
 use App\Http\Controllers\Api\Admin\UserManagementController;
 use App\Http\Controllers\Api\Admin\PersonnelController;
+use App\Http\Controllers\Api\ServiceController;
+
 
 use App\Http\Controllers\Api\ConsultationController;
 use App\Http\Controllers\Api\PatientController;
@@ -61,6 +63,8 @@ Route::prefix('v1')->group(function () {
         Route::get('patients/{id}/history',  [PatientController::class, 'history'])->name('v1.patients.history');
     });
 
+    Route::apiResource('services', ServiceController::class)
+    ->scoped(['service' => 'slug']);
 
     // ── Métier hors /admin : VISITES (/api/v1/visites) ─────────────────────
     Route::middleware(['auth:sanctum'])->group(function () {
