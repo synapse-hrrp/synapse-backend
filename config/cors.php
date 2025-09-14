@@ -2,26 +2,41 @@
 
 return [
 
-    'paths' => ['api/*', 'sanctum/csrf-cookie'],
+    // On ne sert que l’API (pas besoin de sanctum/csrf-cookie en mode Bearer)
+    'paths' => ['api/*'],
 
-    'allowed_methods' => ['*'],
+    // Méthodes permises par le front
+    'allowed_methods' => ['GET', 'POST', 'PUT', 'PATCH', 'DELETE', 'OPTIONS'],
 
-    // Mets ici EXACTEMENT les origines qui appelleront ton API
+    // ✅ Liste BLANCHE des origines (mets tes domaines exacts)
     'allowed_origins' => [
-        'http://localhost:3000',
+        env('FRONTEND_URL', 'http://localhost:3000'),
         'http://127.0.0.1:3000',
-        // ajoute l’URL réelle de ton front en prod :
-        // 'https://mon-front-next.com',
+        // 'https://ton-front-prod.com',
     ],
 
+    // On n’utilise pas les patterns quand on a une whitelist stricte
     'allowed_origins_patterns' => [],
 
-    'allowed_headers' => ['*'],
+    // En mode Bearer, autorise les en-têtes classiques + Authorization
+    'allowed_headers' => [
+        'Authorization',
+        'Content-Type',
+        'Accept',
+        'Origin',
+        'X-Requested-With',
+    ],
 
-    'exposed_headers' => [],
+    // Expose quelques headers utiles aux clients (facultatif)
+    'exposed_headers' => [
+        'X-RateLimit-Limit',
+        'X-RateLimit-Remaining',
+        'Retry-After',
+    ],
 
-    'max_age' => 0,
+    // Cache des pré-requêtes OPTIONS (24h)
+    'max_age' => 86400,
 
-    // ✅ En mode token Bearer, on laisse à false
+    // ⚠️ Bearer tokens → PAS de cookies → PAS de credentials
     'supports_credentials' => false,
 ];

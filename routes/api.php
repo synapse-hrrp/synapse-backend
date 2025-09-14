@@ -2,7 +2,7 @@
 
 use Illuminate\Support\Facades\Route;
 
-// ── Controllers principaux ───────────────────────────────────────────────
+// ── Controllers ───────────────────────────────────────────────────────────
 use App\Http\Controllers\Api\AuthController;
 use App\Http\Controllers\Api\Admin\UserManagementController;
 use App\Http\Controllers\Api\Admin\PersonnelController;
@@ -27,234 +27,430 @@ use App\Http\Controllers\Api\BlocOperatoireController;
 
 Route::prefix('v1')->group(function () {
 
-    // ── Auth ─────────────────────────────────────────────────────────────────
-    Route::post('auth/login', [AuthController::class, 'login']);
-    Route::middleware('auth:sanctum')->group(function () {
+    // ── Auth (/api/v1/auth) ────────────────────────────────────────────────
+    Route::post('auth/login',   [AuthController::class, 'login'])->middleware('throttle:login');
+    Route::post('auth/refresh', [AuthController::class, 'refresh'])->middleware(['auth:sanctum','throttle:auth']);
+    Route::middleware(['auth:sanctum','throttle:auth'])->group(function () {
         Route::post('auth/logout', [AuthController::class, 'logout']);
-        Route::get('auth/me',     [AuthController::class, 'me']);
+        Route::get('auth/me',      [AuthController::class, 'me']);
     });
 
-    // ── Admin only (/api/v1/admin/...) ──────────────────────────────────────
+    // ── Admin (/api/v1/admin) ─────────────────────────────────────────────
     Route::prefix('admin')
-        ->middleware(['auth:sanctum', 'role:admin'])
+        ->middleware(['auth:sanctum','throttle:auth','role:admin'])
         ->group(function () {
-
-            // Users (REST)
+            // Users (/api/v1/admin/users)
             Route::apiResource('users', UserManagementController::class)
                 ->parameters(['users' => 'user']);
 
-            // Personnels (REST)
+            // Personnels (/api/v1/admin/personnels)
             Route::apiResource('personnels', PersonnelController::class)
                 ->parameters(['personnels' => 'personnel']);
-
-            // ⚠️ NE METS PAS les routes patients ici
         });
 
-    // ── Métier hors /admin : PATIENTS (/api/v1/patients) ───────────────────
-    Route::middleware(['auth:sanctum'])->group(function () {
-        Route::get('patients',               [PatientController::class, 'index'])->name('v1.patients.index');
-        Route::post('patients',              [PatientController::class, 'store'])->name('v1.patients.store');
-        Route::get('patients/{patient}',     [PatientController::class, 'show'])->name('v1.patients.show');
-        Route::patch('patients/{patient}',   [PatientController::class, 'update'])->name('v1.patients.update');
-        Route::delete('patients/{patient}',  [PatientController::class, 'destroy'])->name('v1.patients.destroy');
-        Route::post('patients/{id}/restore', [PatientController::class, 'restore'])->name('v1.patients.restore');
-        Route::get('patients/{id}/history',  [PatientController::class, 'history'])->name('v1.patients.history');
+    // ── Patients (/api/v1/patients) ───────────────────────────────────────
+    Route::middleware(['auth:sanctum','throttle:auth'])->group(function () {
+        Route::get(   'patients',              [PatientController::class, 'index'])
+            ->middleware('ability:patients.view')->name('v1.patients.index');
+
+        Route::post(  'patients',              [PatientController::class, 'store'])
+            ->middleware('ability:patients.create')->name('v1.patients.store');
+
+        Route::get(   'patients/{patient}',    [PatientController::class, 'show'])
+            ->middleware('ability:patients.view')->name('v1.patients.show');
+
+        Route::patch( 'patients/{patient}',    [PatientController::class, 'update'])
+            ->middleware('ability:patients.update')->name('v1.patients.update');
+
+        Route::delete('patients/{patient}',    [PatientController::class, 'destroy'])
+            ->middleware('ability:patients.delete')->name('v1.patients.destroy');
+
+        Route::post(  'patients/{id}/restore', [PatientController::class, 'restore'])
+            ->middleware('ability:patients.update')->name('v1.patients.restore');
+
+        Route::get(   'patients/{id}/history', [PatientController::class, 'history'])
+            ->middleware('ability:patients.view')->name('v1.patients.history');
     });
 
+    // ── Visites (/api/v1/visites) ─────────────────────────────────────────
+    // NB: si tu veux garder ces abilities, ajoute 'visites.read' / 'visites.write' à ton seeder.
+    Route::middleware(['auth:sanctum','throttle:auth'])->group(function () {
+        Route::get(  'visites',      [VisiteController::class,'index'])
+            ->middleware('ability:visites.read')->name('v1.visites.index');
 
-    // ── Métier hors /admin : VISITES (/api/v1/visites) ─────────────────────
-    Route::middleware(['auth:sanctum'])->group(function () {
-        Route::get(  'visites',       [VisiteController::class,'index'])->middleware('ability:visites.read')->name('v1.visites.index');
-        Route::get(  'visites/{id}',  [VisiteController::class,'show'])->middleware('ability:visites.read')->name('v1.visites.show');
-        Route::post( 'visites',       [VisiteController::class,'store'])->middleware('ability:visites.write')->name('v1.visites.store');
-        Route::patch('visites/{id}',  [VisiteController::class,'update'])->middleware('ability:visites.write')->name('v1.visites.update');
+        Route::get(  'visites/{id}', [VisiteController::class,'show'])
+            ->middleware('ability:visites.read')->name('v1.visites.show');
+
+        Route::post( 'visites',      [VisiteController::class,'store'])
+            ->middleware('ability:visites.write')->name('v1.visites.store');
+
+        Route::patch('visites/{id}', [VisiteController::class,'update'])
+            ->middleware('ability:visites.write')->name('v1.visites.update');
     });
 
-    // ── Métier hors /admin : LABORATOIRE (/api/v1/laboratoire) ─────────────────────
-    Route::middleware(['auth:sanctum'])->group(function () {
-        Route::get(   'laboratoire',               [LaboratoireController::class, 'index'])->name('v1.laboratoire.index');
-        Route::post(  'laboratoire',               [LaboratoireController::class, 'store'])->name('v1.laboratoire.store');
-        Route::get(   'laboratoire/{laboratoire}', [LaboratoireController::class, 'show'])->name('v1.laboratoire.show');
-        Route::put('laboratoire/{laboratoire}',   [LaboratoireController::class, 'update']); // 👈 ajouter ceci
-        Route::patch( 'laboratoire/{laboratoire}', [LaboratoireController::class, 'update'])->name('v1.laboratoire.update');
-        Route::delete('laboratoire/{laboratoire}', [LaboratoireController::class, 'destroy'])->name('v1.laboratoire.destroy');
+    // ── Laboratoire (/api/v1/laboratoire) ─────────────────────────────────
+    // Mappage vers tes permissions seeder: labo.view / labo.request.create / labo.result.write
+    Route::middleware(['auth:sanctum','throttle:auth'])->group(function () {
+        Route::get(   'laboratoire',               [LaboratoireController::class, 'index'])
+            ->middleware('ability:labo.view')->name('v1.laboratoire.index');
+
+        Route::post(  'laboratoire',               [LaboratoireController::class, 'store'])
+            ->middleware('ability:labo.request.create')->name('v1.laboratoire.store');
+
+        Route::get(   'laboratoire/{laboratoire}', [LaboratoireController::class, 'show'])
+            ->middleware('ability:labo.view')->name('v1.laboratoire.show');
+
+        Route::put(   'laboratoire/{laboratoire}', [LaboratoireController::class, 'update'])
+            ->middleware('ability:labo.result.write');
+
+        Route::patch( 'laboratoire/{laboratoire}', [LaboratoireController::class, 'update'])
+            ->middleware('ability:labo.result.write')->name('v1.laboratoire.update');
+
+        Route::delete('laboratoire/{laboratoire}', [LaboratoireController::class, 'destroy'])
+            ->middleware('ability:labo.result.write')->name('v1.laboratoire.destroy');
     });
 
-     // ── Métier hors /admin : PANSEMENT (/api/v1/pansements) ─────────────────────
-        Route::middleware(['auth:sanctum'])->group(function () {
-        Route::get(   'pansements',               [PansementController::class, 'index'])->name('v1.pansements.index');
-        Route::post(  'pansements',               [PansementController::class, 'store'])->name('v1.pansements.store');
-        Route::get(   'pansements/{pansement}',   [PansementController::class, 'show'])->name('v1.pansements.show');
-        Route::put('pansements/{pansement}',   [PansementController::class, 'update']); // 👈 ajouter ceci
-        Route::patch( 'pansements/{pansement}',   [PansementController::class, 'update'])->name('v1.pansements.update');
-        Route::delete('pansements/{pansement}',   [PansementController::class, 'destroy'])->name('v1.pansements.destroy');
+    // ── Pansements (/api/v1/pansements) ───────────────────────────────────
+    Route::middleware(['auth:sanctum','throttle:auth'])->group(function () {
+        Route::get(   'pansements',             [PansementController::class, 'index'])
+            ->middleware('ability:pansement.view')->name('v1.pansements.index');
+
+        Route::post(  'pansements',             [PansementController::class, 'store'])
+            ->middleware('ability:pansement.create')->name('v1.pansements.store');
+
+        Route::get(   'pansements/{pansement}', [PansementController::class, 'show'])
+            ->middleware('ability:pansement.view')->name('v1.pansements.show');
+
+        Route::put(   'pansements/{pansement}', [PansementController::class, 'update'])
+            ->middleware('ability:pansement.update');
+
+        Route::patch( 'pansements/{pansement}', [PansementController::class, 'update'])
+            ->middleware('ability:pansement.update')->name('v1.pansements.update');
+
+        Route::delete('pansements/{pansement}', [PansementController::class, 'destroy'])
+            ->middleware('ability:pansement.delete')->name('v1.pansements.destroy');
     });
 
-    // ── Finance (/api/v1/finance) ─────────────────────────────────────────────
-    Route::middleware(['auth:sanctum'])->group(function () {
+    // ── Finance – Invoices & Payments (/api/v1/finance/…) ─────────────────
+    Route::middleware(['auth:sanctum','throttle:auth'])->group(function () {
+        // Invoices
+        Route::get(   'finance/invoices',           [InvoiceController::class,'index'])
+            ->middleware('ability:finance.invoice.view');
 
-        // Factures
-        Route::get(   'finance/invoices',            [\App\Http\Controllers\Api\Finance\InvoiceController::class,'index']);
-        Route::post(  'finance/invoices',            [\App\Http\Controllers\Api\Finance\InvoiceController::class,'store']);
-        Route::get(   'finance/invoices/{invoice}',  [\App\Http\Controllers\Api\Finance\InvoiceController::class,'show']);
-        Route::patch( 'finance/invoices/{invoice}',  [\App\Http\Controllers\Api\Finance\InvoiceController::class,'update']);
-        Route::delete('finance/invoices/{invoice}',  [\App\Http\Controllers\Api\Finance\InvoiceController::class,'destroy']);
+        Route::post(  'finance/invoices',           [InvoiceController::class,'store'])
+            ->middleware('ability:finance.invoice.create');
 
-        // Paiements
-        Route::get(   'finance/payments',            [\App\Http\Controllers\Api\Finance\PaymentController::class,'index']);
-        Route::post(  'finance/payments',            [\App\Http\Controllers\Api\Finance\PaymentController::class,'store']);
+        Route::get(   'finance/invoices/{invoice}', [InvoiceController::class,'show'])
+            ->middleware('ability:finance.invoice.view');
+
+        Route::patch( 'finance/invoices/{invoice}', [InvoiceController::class,'update'])
+            ->middleware('ability:finance.invoice.create');
+
+        Route::delete('finance/invoices/{invoice}', [InvoiceController::class,'destroy'])
+            ->middleware('ability:finance.invoice.create');
+
+        // Payments
+        Route::get(   'finance/payments',           [PaymentController::class,'index'])
+            ->middleware('ability:finance.payment.create');
+
+        Route::post(  'finance/payments',           [PaymentController::class,'store'])
+            ->middleware('ability:finance.payment.create');
     });
 
-    // ── Pediatre (/api/v1/pediatrie) ─────────────────────────────────────────────
-    Route::middleware(['auth:sanctum'])->group(function () {
-        // CRUD + corbeille
-        Route::get(   'pediatrie',                [PediatrieController::class, 'index'])->name('v1.pediatrie.index');
-        Route::post(  'pediatrie',                [PediatrieController::class, 'store'])->name('v1.pediatrie.store');
-        Route::get(   'pediatrie/{pediatrie}',    [PediatrieController::class, 'show'])->name('v1.pediatrie.show');
-        Route::patch( 'pediatrie/{pediatrie}',    [PediatrieController::class, 'update'])->name('v1.pediatrie.update');
-        Route::put(   'pediatrie/{pediatrie}',    [PediatrieController::class, 'update']);
-        Route::delete('pediatrie/{pediatrie}',    [PediatrieController::class, 'destroy'])->name('v1.pediatrie.destroy');
+    // ── Pédiatrie (/api/v1/pediatrie) + Corbeille (/api/v1/pediatrie-corbeille) ─
+    Route::middleware(['auth:sanctum','throttle:auth'])->group(function () {
+        Route::get(   'pediatrie',              [PediatrieController::class, 'index'])
+            ->middleware('ability:pediatrie.view')->name('v1.pediatrie.index');
 
-        // Corbeille & restauration
-        Route::get(   'pediatrie-corbeille',      [PediatrieController::class, 'trash'])->name('v1.pediatrie.trash');
-        Route::post(  'pediatrie/{id}/restore',   [PediatrieController::class, 'restore'])->name('v1.pediatrie.restore');
-        Route::delete('pediatrie/{id}/force',     [PediatrieController::class, 'forceDestroy'])->name('v1.pediatrie.force');
+        Route::post(  'pediatrie',              [PediatrieController::class, 'store'])
+            ->middleware('ability:pediatrie.create')->name('v1.pediatrie.store');
 
+        Route::get(   'pediatrie/{pediatrie}',  [PediatrieController::class, 'show'])
+            ->middleware('ability:pediatrie.view')->name('v1.pediatrie.show');
+
+        Route::patch( 'pediatrie/{pediatrie}',  [PediatrieController::class, 'update'])
+            ->middleware('ability:pediatrie.update')->name('v1.pediatrie.update');
+
+        Route::put(   'pediatrie/{pediatrie}',  [PediatrieController::class, 'update'])
+            ->middleware('ability:pediatrie.update');
+
+        Route::delete('pediatrie/{pediatrie}',  [PediatrieController::class, 'destroy'])
+            ->middleware('ability:pediatrie.delete')->name('v1.pediatrie.destroy');
+
+        Route::get(   'pediatrie-corbeille',    [PediatrieController::class, 'trash'])
+            ->middleware('ability:pediatrie.view')->name('v1.pediatrie.trash');
+
+        Route::post(  'pediatrie/{id}/restore', [PediatrieController::class, 'restore'])
+            ->middleware('ability:pediatrie.update')->name('v1.pediatrie.restore');
+
+        Route::delete('pediatrie/{id}/force',   [PediatrieController::class, 'forceDestroy'])
+            ->middleware('ability:pediatrie.delete')->name('v1.pediatrie.force');
     });
 
-    // ── gynécologie (/api/v1/gynécologie) ─────────────────────────────────────────────
-    Route::middleware(['auth:sanctum'])->group(function () {
-        Route::get(   'gynecologie',               [GynecologieController::class, 'index'])->name('v1.gynecologie.index');
-        Route::post(  'gynecologie',               [GynecologieController::class, 'store'])->name('v1.gynecologie.store');
-        Route::get(   'gynecologie/{gynecologie}', [GynecologieController::class, 'show'])->name('v1.gynecologie.show');
-        Route::patch( 'gynecologie/{gynecologie}', [GynecologieController::class, 'update'])->name('v1.gynecologie.update');
-        Route::put(   'gynecologie/{gynecologie}', [GynecologieController::class, 'update']);
-        Route::delete('gynecologie/{gynecologie}', [GynecologieController::class, 'destroy'])->name('v1.gynecologie.destroy');
+    // ── Gynécologie (/api/v1/gynecologie) ──────────────────────────────────
+    Route::middleware(['auth:sanctum','throttle:auth'])->group(function () {
+        Route::get(   'gynecologie',               [GynecologieController::class, 'index'])
+            ->middleware('ability:gynecologie.view')->name('v1.gynecologie.index');
 
-        // Corbeille / restauration / suppression définitive
-        Route::post('gynecologie/{id}/restore',    [GynecologieController::class, 'restore'])->name('v1.gynecologie.restore');
-        Route::delete('gynecologie/{id}/force',    [GynecologieController::class, 'forceDelete'])->name('v1.gynecologie.force');
+        Route::post(  'gynecologie',               [GynecologieController::class, 'store'])
+            ->middleware('ability:gynecologie.create')->name('v1.gynecologie.store');
+
+        Route::get(   'gynecologie/{gynecologie}', [GynecologieController::class, 'show'])
+            ->middleware('ability:gynecologie.view')->name('v1.gynecologie.show');
+
+        Route::patch( 'gynecologie/{gynecologie}', [GynecologieController::class, 'update'])
+            ->middleware('ability:gynecologie.update')->name('v1.gynecologie.update');
+
+        Route::put(   'gynecologie/{gynecologie}', [GynecologieController::class, 'update'])
+            ->middleware('ability:gynecologie.update');
+
+        Route::delete('gynecologie/{gynecologie}', [GynecologieController::class, 'destroy'])
+            ->middleware('ability:gynecologie.delete')->name('v1.gynecologie.destroy');
+
+        Route::post(  'gynecologie/{id}/restore',  [GynecologieController::class, 'restore'])
+            ->middleware('ability:gynecologie.update')->name('v1.gynecologie.restore');
+
+        Route::delete('gynecologie/{id}/force',    [GynecologieController::class, 'forceDelete'])
+            ->middleware('ability:gynecologie.delete')->name('v1.gynecologie.force');
     });
 
-    // ── smi (/api/v1/smi) ─────────────────────────────────────────────
-    Route::middleware(['auth:sanctum'])->group(function () {
-        Route::get(   'smi',            [SmiController::class, 'index'])->name('v1.smi.index');
-        Route::post(  'smi',            [SmiController::class, 'store'])->name('v1.smi.store');
-        Route::get(   'smi/{smi}',      [SmiController::class, 'show'])->name('v1.smi.show');
-        Route::patch( 'smi/{smi}',      [SmiController::class, 'update'])->name('v1.smi.update');
-        Route::put(   'smi/{smi}',      [SmiController::class, 'update']);
-        Route::delete('smi/{smi}',      [SmiController::class, 'destroy'])->name('v1.smi.destroy');
+    // ── SMI (/api/v1/smi) ──────────────────────────────────────────────────
+    Route::middleware(['auth:sanctum','throttle:auth'])->group(function () {
+        Route::get(   'smi',           [SmiController::class, 'index'])
+            ->middleware('ability:smi.view')->name('v1.smi.index');
 
-        // Corbeille SMI
-        Route::get(   'smi-corbeille',  [SmiController::class, 'trash'])->name('v1.smi.trash');
-        Route::post(  'smi/{id}/restore', [SmiController::class, 'restore'])->name('v1.smi.restore');
-        Route::delete('smi/{id}/force',   [SmiController::class, 'forceDestroy'])->name('v1.smi.force');
+        Route::post(  'smi',           [SmiController::class, 'store'])
+            ->middleware('ability:smi.create')->name('v1.smi.store');
+
+        Route::get(   'smi/{smi}',     [SmiController::class, 'show'])
+            ->middleware('ability:smi.view')->name('v1.smi.show');
+
+        Route::patch( 'smi/{smi}',     [SmiController::class, 'update'])
+            ->middleware('ability:smi.update')->name('v1.smi.update');
+
+        Route::put(   'smi/{smi}',     [SmiController::class, 'update'])
+            ->middleware('ability:smi.update');
+
+        Route::delete('smi/{smi}',     [SmiController::class, 'destroy'])
+            ->middleware('ability:smi.delete')->name('v1.smi.destroy');
+
+        Route::get(   'smi-corbeille', [SmiController::class, 'trash'])
+            ->middleware('ability:smi.view')->name('v1.smi.trash');
+
+        Route::post(  'smi/{id}/restore', [SmiController::class, 'restore'])
+            ->middleware('ability:smi.update')->name('v1.smi.restore');
+
+        Route::delete('smi/{id}/force',   [SmiController::class, 'forceDestroy'])
+            ->middleware('ability:smi.delete')->name('v1.smi.force');
     });
 
-    // ── maternite (/api/v1/maternite) ─────────────────────────────────────────────
-    Route::middleware(['auth:sanctum'])->group(function () {
-        Route::get(   'maternite',               [MaterniteController::class, 'index'])->name('v1.maternite.index');
-        Route::post(  'maternite',               [MaterniteController::class, 'store'])->name('v1.maternite.store');
-        Route::get(   'maternite/{maternite}',   [MaterniteController::class, 'show'])->name('v1.maternite.show');
-        Route::patch( 'maternite/{maternite}',   [MaterniteController::class, 'update'])->name('v1.maternite.update');
-        Route::put(   'maternite/{maternite}',   [MaterniteController::class, 'update']);
-        Route::delete('maternite/{maternite}',   [MaterniteController::class, 'destroy'])->name('v1.maternite.destroy');
+    // ── Maternité (/api/v1/maternite) ──────────────────────────────────────
+    Route::middleware(['auth:sanctum','throttle:auth'])->group(function () {
+        Route::get(   'maternite',               [MaterniteController::class, 'index'])
+            ->middleware('ability:maternite.view')->name('v1.maternite.index');
 
-        // Corbeille / restore / suppression définitive
-        Route::get(   'maternite-corbeille',     [MaterniteController::class, 'trash'])->name('v1.maternite.trash');
-        Route::post(  'maternite/{id}/restore',  [MaterniteController::class, 'restore'])->name('v1.maternite.restore');
-        Route::delete('maternite/{id}/force',    [MaterniteController::class, 'forceDestroy'])->name('v1.maternite.force');
+        Route::post(  'maternite',               [MaterniteController::class, 'store'])
+            ->middleware('ability:maternite.create')->name('v1.maternite.store');
+
+        Route::get(   'maternite/{maternite}',   [MaterniteController::class, 'show'])
+            ->middleware('ability:maternite.view')->name('v1.maternite.show');
+
+        Route::patch( 'maternite/{maternite}',   [MaterniteController::class, 'update'])
+            ->middleware('ability:maternite.update')->name('v1.maternite.update');
+
+        Route::put(   'maternite/{maternite}',   [MaterniteController::class, 'update'])
+            ->middleware('ability:maternite.update');
+
+        Route::delete('maternite/{maternite}',   [MaterniteController::class, 'destroy'])
+            ->middleware('ability:maternite.delete')->name('v1.maternite.destroy');
+
+        Route::get(   'maternite-corbeille',     [MaterniteController::class, 'trash'])
+            ->middleware('ability:maternite.view')->name('v1.maternite.trash');
+
+        Route::post(  'maternite/{id}/restore',  [MaterniteController::class, 'restore'])
+            ->middleware('ability:maternite.update')->name('v1.maternite.restore');
+
+        Route::delete('maternite/{id}/force',    [MaterniteController::class, 'forceDestroy'])
+            ->middleware('ability:maternite.delete')->name('v1.maternite.force');
     });
 
-    // ── gestion_malade (/api/v1/gestion_malade) ─────────────────────────────────────────────
-    Route::middleware(['auth:sanctum'])->group(function () {
-        Route::get(   'gestion-malade',               [GestionMaladeController::class, 'index'])->name('v1.gestion_malade.index');
-        Route::post(  'gestion-malade',               [GestionMaladeController::class, 'store'])->name('v1.gestion_malade.store');
-        Route::get(   'gestion-malade/{gestion_malade}',   [GestionMaladeController::class, 'show'])->name('v1.gestion_malade.show');
-        Route::patch( 'gestion-malade/{gestion_malade}',   [GestionMaladeController::class, 'update'])->name('v1.gestion_malade.update');
-        Route::put(   'gestion-malade/{gestion_malade}',   [GestionMaladeController::class, 'update']);
-        Route::delete('gestion-malade/{gestion_malade}',   [GestionMaladeController::class, 'destroy'])->name('v1.gestion_malade.destroy');
+    // ── Gestion malade (/api/v1/gestion-malade) ────────────────────────────
+    Route::middleware(['auth:sanctum','throttle:auth'])->group(function () {
+        Route::get(   'gestion-malade',                  [GestionMaladeController::class, 'index'])
+            ->middleware('ability:gestion-malade.view')->name('v1.gestion_malade.index');
 
-        // Corbeille / restore / suppression définitive
-        Route::get(   'gestion-malade-corbeille',     [GestionMaladeController::class, 'trash'])->name('v1.gestion_malade.trash');
-        Route::post(  'gestion-malade/{id}/restore',  [GestionMaladeController::class, 'restore'])->name('v1.gestion_malade.restore');
-        Route::delete('gestion-malade/{id}/force',    [GestionMaladeController::class, 'forceDestroy'])->name('v1.gestion_malade.force');
+        Route::post(  'gestion-malade',                  [GestionMaladeController::class, 'store'])
+            ->middleware('ability:gestion-malade.create')->name('v1.gestion_malade.store');
+
+        Route::get(   'gestion-malade/{gestion_malade}', [GestionMaladeController::class, 'show'])
+            ->middleware('ability:gestion-malade.view')->name('v1.gestion_malade.show');
+
+        Route::patch( 'gestion-malade/{gestion_malade}', [GestionMaladeController::class, 'update'])
+            ->middleware('ability:gestion-malade.update')->name('v1.gestion_malade.update');
+
+        Route::put(   'gestion-malade/{gestion_malade}', [GestionMaladeController::class, 'update'])
+            ->middleware('ability:gestion-malade.update');
+
+        Route::delete('gestion-malade/{gestion_malade}', [GestionMaladeController::class, 'destroy'])
+            ->middleware('ability:gestion-malade.delete')->name('v1.gestion_malade.destroy');
+
+        Route::get(   'gestion-malade-corbeille',        [GestionMaladeController::class, 'trash'])
+            ->middleware('ability:gestion-malade.view')->name('v1.gestion_malade.trash');
+
+        Route::post(  'gestion-malade/{id}/restore',     [GestionMaladeController::class, 'restore'])
+            ->middleware('ability:gestion-malade.update')->name('v1.gestion_malade.restore');
+
+        Route::delete('gestion-malade/{id}/force',       [GestionMaladeController::class, 'forceDestroy'])
+            ->middleware('ability:gestion-malade.delete')->name('v1.gestion_malade.force');
     });
 
-    // ── sanitaire (/api/v1/sanitaire) ─────────────────────────────────────────────
-    Route::middleware(['auth:sanctum'])->group(function () {
-        Route::get(   'sanitaire',               [SanitaireController::class, 'index'])->name('v1.sanitaire.index');
-        Route::post(  'sanitaire',               [SanitaireController::class, 'store'])->name('v1.sanitaire.store');
-        Route::get(   'sanitaire/{sanitaire}',   [SanitaireController::class, 'show'])->name('v1.sanitaire.show');
-        Route::patch( 'sanitaire/{sanitaire}',   [SanitaireController::class, 'update'])->name('v1.sanitaire.update');
-        Route::put(   'sanitaire/{sanitaire}',   [SanitaireController::class, 'update']);
-        Route::delete('sanitaire/{sanitaire}',   [SanitaireController::class, 'destroy'])->name('v1.sanitaire.destroy');
+    // ── Sanitaire (/api/v1/sanitaire) ──────────────────────────────────────
+    Route::middleware(['auth:sanctum','throttle:auth'])->group(function () {
+        Route::get(   'sanitaire',               [SanitaireController::class, 'index'])
+            ->middleware('ability:sanitaire.view')->name('v1.sanitaire.index');
 
-        // Corbeille / restore / suppression définitive
-        Route::get(   'sanitaire-corbeille',     [SanitaireController::class, 'trash'])->name('v1.sanitaire.trash');
-        Route::post(  'sanitaire/{id}/restore',  [SanitaireController::class, 'restore'])->name('v1.sanitaire.restore');
-        Route::delete('sanitaire/{id}/force',    [SanitaireController::class, 'forceDestroy'])->name('v1.sanitaire.force');
+        Route::post(  'sanitaire',               [SanitaireController::class, 'store'])
+            ->middleware('ability:sanitaire.create')->name('v1.sanitaire.store');
+
+        Route::get(   'sanitaire/{sanitaire}',   [SanitaireController::class, 'show'])
+            ->middleware('ability:sanitaire.view')->name('v1.sanitaire.show');
+
+        Route::patch( 'sanitaire/{sanitaire}',   [SanitaireController::class, 'update'])
+            ->middleware('ability:sanitaire.update')->name('v1.sanitaire.update');
+
+        Route::put(   'sanitaire/{sanitaire}',   [SanitaireController::class, 'update'])
+            ->middleware('ability:sanitaire.update');
+
+        Route::delete('sanitaire/{sanitaire}',   [SanitaireController::class, 'destroy'])
+            ->middleware('ability:sanitaire.delete')->name('v1.sanitaire.destroy');
+
+        Route::get(   'sanitaire-corbeille',     [SanitaireController::class, 'trash'])
+            ->middleware('ability:sanitaire.view')->name('v1.sanitaire.trash');
+
+        Route::post(  'sanitaire/{id}/restore',  [SanitaireController::class, 'restore'])
+            ->middleware('ability:sanitaire.update')->name('v1.sanitaire.restore');
+
+        Route::delete('sanitaire/{id}/force',    [SanitaireController::class, 'forceDestroy'])
+            ->middleware('ability:sanitaire.delete')->name('v1.sanitaire.force');
     });
 
-    // ── kinesitherapie (/api/v1/kinesitherapie) ─────────────────────────────────────────────
-    Route::middleware(['auth:sanctum'])->group(function () {
-        Route::get(   'kinesitherapie',               [KinesitherapieController::class, 'index'])->name('v1.kine.index');
-        Route::post(  'kinesitherapie',               [KinesitherapieController::class, 'store'])->name('v1.kine.store');
-        Route::get(   'kinesitherapie/{kinesitherapie}',   [KinesitherapieController::class, 'show'])->name('v1.kine.show');
-        Route::patch( 'kinesitherapie/{kinesitherapie}',   [KinesitherapieController::class, 'update'])->name('v1.kine.update');
-        Route::put(   'kinesitherapie/{kinesitherapie}',   [KinesitherapieController::class, 'update']);
-        Route::delete('kinesitherapie/{kinesitherapie}',   [KinesitherapieController::class, 'destroy'])->name('v1.kine.destroy');
+    // ── Kinésithérapie (/api/v1/kinesitherapie) ────────────────────────────
+    Route::middleware(['auth:sanctum','throttle:auth'])->group(function () {
+        Route::get(   'kinesitherapie',                  [KinesitherapieController::class, 'index'])
+            ->middleware('ability:kinesitherapie.view')->name('v1.kine.index');
 
-        // Corbeille / restore / force delete
-        Route::get(   'kinesitherapie-corbeille',     [KinesitherapieController::class, 'trash'])->name('v1.kine.trash');
-        Route::post(  'kinesitherapie/{id}/restore',  [KinesitherapieController::class, 'restore'])->name('v1.kine.restore');
-        Route::delete('kinesitherapie/{id}/force',    [KinesitherapieController::class, 'forceDestroy'])->name('v1.kine.force');
+        Route::post(  'kinesitherapie',                  [KinesitherapieController::class, 'store'])
+            ->middleware('ability:kinesitherapie.create')->name('v1.kine.store');
+
+        Route::get(   'kinesitherapie/{kinesitherapie}', [KinesitherapieController::class, 'show'])
+            ->middleware('ability:kinesitherapie.view')->name('v1.kine.show');
+
+        Route::patch( 'kinesitherapie/{kinesitherapie}', [KinesitherapieController::class, 'update'])
+            ->middleware('ability:kinesitherapie.update')->name('v1.kine.update');
+
+        Route::put(   'kinesitherapie/{kinesitherapie}', [KinesitherapieController::class, 'update'])
+            ->middleware('ability:kinesitherapie.update');
+
+        Route::delete('kinesitherapie/{kinesitherapie}', [KinesitherapieController::class, 'destroy'])
+            ->middleware('ability:kinesitherapie.delete')->name('v1.kine.destroy');
+
+        Route::get(   'kinesitherapie-corbeille',        [KinesitherapieController::class, 'trash'])
+            ->middleware('ability:kinesitherapie.view')->name('v1.kine.trash');
+
+        Route::post(  'kinesitherapie/{id}/restore',     [KinesitherapieController::class, 'restore'])
+            ->middleware('ability:kinesitherapie.update')->name('v1.kine.restore');
+
+        Route::delete('kinesitherapie/{id}/force',       [KinesitherapieController::class, 'forceDestroy'])
+            ->middleware('ability:kinesitherapie.delete')->name('v1.kine.force');
     });
 
-    // ── aru (/api/v1/aru) ─────────────────────────────────────────────
-    Route::middleware(['auth:sanctum'])->group(function () {
-        Route::get(   'aru',               [AruController::class, 'index'])->name('v1.aru.index');
-        Route::post(  'aru',               [AruController::class, 'store'])->name('v1.aru.store');
-        Route::get(   'aru/{aru}',         [AruController::class, 'show'])->name('v1.aru.show');
-        Route::patch( 'aru/{aru}',         [AruController::class, 'update'])->name('v1.aru.update');
-        Route::put(   'aru/{aru}',         [AruController::class, 'update']);
-        Route::delete('aru/{aru}',         [AruController::class, 'destroy'])->name('v1.aru.destroy');
+    // ── ARU (/api/v1/aru) ──────────────────────────────────────────────────
+    Route::middleware(['auth:sanctum','throttle:auth'])->group(function () {
+        Route::get(   'aru',           [AruController::class, 'index'])
+            ->middleware('ability:aru.view')->name('v1.aru.index');
 
-        // Corbeille / restore / force delete
-        Route::get(   'aru-corbeille',     [AruController::class, 'trash'])->name('v1.aru.trash');
-        Route::post(  'aru/{id}/restore',  [AruController::class, 'restore'])->name('v1.aru.restore');
-        Route::delete('aru/{id}/force',    [AruController::class, 'forceDestroy'])->name('v1.aru.force');
+        Route::post(  'aru',           [AruController::class, 'store'])
+            ->middleware('ability:aru.create')->name('v1.aru.store');
+
+        Route::get(   'aru/{aru}',     [AruController::class, 'show'])
+            ->middleware('ability:aru.view')->name('v1.aru.show');
+
+        Route::patch( 'aru/{aru}',     [AruController::class, 'update'])
+            ->middleware('ability:aru.update')->name('v1.aru.update');
+
+        Route::put(   'aru/{aru}',     [AruController::class, 'update'])
+            ->middleware('ability:aru.update');
+
+        Route::delete('aru/{aru}',     [AruController::class, 'destroy'])
+            ->middleware('ability:aru.delete')->name('v1.aru.destroy');
+
+        Route::get(   'aru-corbeille', [AruController::class, 'trash'])
+            ->middleware('ability:aru.view')->name('v1.aru.trash');
+
+        Route::post(  'aru/{id}/restore', [AruController::class, 'restore'])
+            ->middleware('ability:aru.update')->name('v1.aru.restore');
+
+        Route::delete('aru/{id}/force',   [AruController::class, 'forceDestroy'])
+            ->middleware('ability:aru.delete')->name('v1.aru.force');
     });
 
-    // ── bloc-operatoire (/api/v1/bloc-operatoire) ─────────────────────────────────────────────
-    Route::middleware(['auth:sanctum'])->group(function () {
-        Route::get(   'bloc-operatoire',               [BlocOperatoireController::class, 'index'])->name('v1.bloc.index');
-        Route::post(  'bloc-operatoire',               [BlocOperatoireController::class, 'store'])->name('v1.bloc.store');
-        Route::get(   'bloc-operatoire/{bloc_operatoire}', [BlocOperatoireController::class, 'show'])->name('v1.bloc.show');
-        Route::patch( 'bloc-operatoire/{bloc_operatoire}', [BlocOperatoireController::class, 'update'])->name('v1.bloc.update');
-        Route::put(   'bloc-operatoire/{bloc_operatoire}', [BlocOperatoireController::class, 'update']);
-        Route::delete('bloc-operatoire/{bloc_operatoire}', [BlocOperatoireController::class, 'destroy'])->name('v1.bloc.destroy');
+    // ── Bloc opératoire (/api/v1/bloc-operatoire) ──────────────────────────
+    Route::middleware(['auth:sanctum','throttle:auth'])->group(function () {
+        Route::get(   'bloc-operatoire',                    [BlocOperatoireController::class, 'index'])
+            ->middleware('ability:bloc-operatoire.view')->name('v1.bloc.index');
 
-        // Corbeille / restore / force delete
-        Route::get(   'bloc-operatoire-corbeille',     [BlocOperatoireController::class, 'trash'])->name('v1.bloc.trash');
-        Route::post(  'bloc-operatoire/{id}/restore',  [BlocOperatoireController::class, 'restore'])->name('v1.bloc.restore');
-        Route::delete('bloc-operatoire/{id}/force',    [BlocOperatoireController::class, 'forceDestroy'])->name('v1.bloc.force');
+        Route::post(  'bloc-operatoire',                    [BlocOperatoireController::class, 'store'])
+            ->middleware('ability:bloc-operatoire.create')->name('v1.bloc.store');
+
+        Route::get(   'bloc-operatoire/{bloc_operatoire}',  [BlocOperatoireController::class, 'show'])
+            ->middleware('ability:bloc-operatoire.view')->name('v1.bloc.show');
+
+        Route::patch( 'bloc-operatoire/{bloc_operatoire}',  [BlocOperatoireController::class, 'update'])
+            ->middleware('ability:bloc-operatoire.update')->name('v1.bloc.update');
+
+        Route::put(   'bloc-operatoire/{bloc_operatoire}',  [BlocOperatoireController::class, 'update'])
+            ->middleware('ability:bloc-operatoire.update');
+
+        Route::delete('bloc-operatoire/{bloc_operatoire}',  [BlocOperatoireController::class, 'destroy'])
+            ->middleware('ability:bloc-operatoire.delete')->name('v1.bloc.destroy');
+
+        Route::get(   'bloc-operatoire-corbeille',          [BlocOperatoireController::class, 'trash'])
+            ->middleware('ability:bloc-operatoire.view')->name('v1.bloc.trash');
+
+        Route::post(  'bloc-operatoire/{id}/restore',       [BlocOperatoireController::class, 'restore'])
+            ->middleware('ability:bloc-operatoire.update')->name('v1.bloc.restore');
+
+        Route::delete('bloc-operatoire/{id}/force',         [BlocOperatoireController::class, 'forceDestroy'])
+            ->middleware('ability:bloc-operatoire.delete')->name('v1.bloc.force');
     });
 
-    // ── consultations (/api/v1/consultations) ─────────────────────────────────────────────
-    Route::middleware(['auth:sanctum'])->group(function () {
-        Route::get(   'consultations',                 [ConsultationController::class, 'index'])->name('v1.consultations.index');
-        Route::post(  'consultations',                 [ConsultationController::class, 'store'])->name('v1.consultations.store');
-        Route::get(   'consultations/{consultation}',  [ConsultationController::class, 'show'])->name('v1.consultations.show');
-        Route::patch( 'consultations/{consultation}',  [ConsultationController::class, 'update'])->name('v1.consultations.update');
-        Route::put(   'consultations/{consultation}',  [ConsultationController::class, 'update']);
-        Route::delete('consultations/{consultation}',  [ConsultationController::class, 'destroy'])->name('v1.consultations.destroy');
+    // ── Consultations (/api/v1/consultations) ──────────────────────────────
+    Route::middleware(['auth:sanctum','throttle:auth'])->group(function () {
+        Route::get(   'consultations',                 [ConsultationController::class, 'index'])
+            ->middleware('ability:consultations.view')->name('v1.consultations.index');
 
-        // corbeille / restauration / suppression définitive
-        Route::get(   'consultations-corbeille',       [ConsultationController::class, 'trash'])->name('v1.consultations.trash');
-        Route::post(  'consultations/{id}/restore',    [ConsultationController::class, 'restore'])->name('v1.consultations.restore');
-        Route::delete('consultations/{id}/force',      [ConsultationController::class, 'forceDestroy'])->name('v1.consultations.force');
+        Route::post(  'consultations',                 [ConsultationController::class, 'store'])
+            ->middleware('ability:consultations.create')->name('v1.consultations.store');
+
+        Route::get(   'consultations/{consultation}',  [ConsultationController::class, 'show'])
+            ->middleware('ability:consultations.view')->name('v1.consultations.show');
+
+        Route::patch( 'consultations/{consultation}',  [ConsultationController::class, 'update'])
+            ->middleware('ability:consultations.update')->name('v1.consultations.update');
+
+        Route::put(   'consultations/{consultation}',  [ConsultationController::class, 'update'])
+            ->middleware('ability:consultations.update');
+
+        Route::delete('consultations/{consultation}',  [ConsultationController::class, 'destroy'])
+            ->middleware('ability:consultations.delete')->name('v1.consultations.destroy');
+
+        Route::get(   'consultations-corbeille',       [ConsultationController::class, 'trash'])
+            ->middleware('ability:consultations.view')->name('v1.consultations.trash');
+
+        Route::post(  'consultations/{id}/restore',    [ConsultationController::class, 'restore'])
+            ->middleware('ability:consultations.update')->name('v1.consultations.restore');
+
+        Route::delete('consultations/{id}/force',      [ConsultationController::class, 'forceDestroy'])
+            ->middleware('ability:consultations.delete')->name('v1.consultations.force');
     });
-
 });
-
