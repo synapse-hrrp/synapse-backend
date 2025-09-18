@@ -12,9 +12,7 @@ return [
     | Default Log Channel
     |--------------------------------------------------------------------------
     |
-    | This option defines the default log channel that is utilized to write
-    | messages to your logs. The value provided here should match one of
-    | the channels present in the list of "channels" configured below.
+    | Canal par défaut. On utilise la pile "stack", configurable via LOG_STACK.
     |
     */
 
@@ -24,11 +22,6 @@ return [
     |--------------------------------------------------------------------------
     | Deprecations Log Channel
     |--------------------------------------------------------------------------
-    |
-    | This option controls the log channel that should be used to log warnings
-    | regarding deprecated PHP and library features. This allows you to get
-    | your application ready for upcoming major versions of dependencies.
-    |
     */
 
     'deprecations' => [
@@ -41,23 +34,21 @@ return [
     | Log Channels
     |--------------------------------------------------------------------------
     |
-    | Here you may configure the log channels for your application. Laravel
-    | utilizes the Monolog PHP logging library, which includes a variety
-    | of powerful log handlers and formatters that you're free to use.
-    |
-    | Available drivers: "single", "daily", "slack", "syslog",
-    |                    "errorlog", "monolog", "custom", "stack"
+    | Canaux disponibles: "single", "daily", "slack", "syslog",
+    | "errorlog", "monolog", "custom", "stack".
     |
     */
 
     'channels' => [
 
+        // Pile principale (on peut choisir les canaux via LOG_STACK)
         'stack' => [
             'driver' => 'stack',
-            'channels' => explode(',', (string) env('LOG_STACK', 'single')),
+            'channels' => explode(',', (string) env('LOG_STACK', 'daily,security')),
             'ignore_exceptions' => false,
         ],
 
+        // Fichier unique (peu recommandé en prod)
         'single' => [
             'driver' => 'single',
             'path' => storage_path('logs/laravel.log'),
@@ -65,6 +56,7 @@ return [
             'replace_placeholders' => true,
         ],
 
+        // Rotation journalière
         'daily' => [
             'driver' => 'daily',
             'path' => storage_path('logs/laravel.log'),
@@ -73,6 +65,7 @@ return [
             'replace_placeholders' => true,
         ],
 
+        // Slack (optionnel)
         'slack' => [
             'driver' => 'slack',
             'url' => env('LOG_SLACK_WEBHOOK_URL'),
@@ -82,6 +75,7 @@ return [
             'replace_placeholders' => true,
         ],
 
+        // Papertrail (optionnel)
         'papertrail' => [
             'driver' => 'monolog',
             'level' => env('LOG_LEVEL', 'debug'),
@@ -94,6 +88,7 @@ return [
             'processors' => [PsrLogMessageProcessor::class],
         ],
 
+        // STDERR (containers)
         'stderr' => [
             'driver' => 'monolog',
             'level' => env('LOG_LEVEL', 'debug'),
@@ -105,6 +100,7 @@ return [
             'processors' => [PsrLogMessageProcessor::class],
         ],
 
+        // Syslog
         'syslog' => [
             'driver' => 'syslog',
             'level' => env('LOG_LEVEL', 'debug'),
@@ -112,21 +108,32 @@ return [
             'replace_placeholders' => true,
         ],
 
+        // PHP error_log
         'errorlog' => [
             'driver' => 'errorlog',
             'level' => env('LOG_LEVEL', 'debug'),
             'replace_placeholders' => true,
         ],
 
+        // Canal "silencieux"
         'null' => [
             'driver' => 'monolog',
             'handler' => NullHandler::class,
         ],
 
+        // Urgences
         'emergency' => [
             'path' => storage_path('logs/laravel.log'),
         ],
 
+        // 🚨 Canal sécurité (auth, ratelimits, accès interdits, etc.)
+        'security' => [
+            'driver'  => 'daily',
+            'path'    => storage_path('logs/security.log'),
+            'level'   => env('LOG_SECURITY_LEVEL', 'info'),
+            'days'    => env('LOG_DAILY_DAYS', 30),
+            'replace_placeholders' => true,
+        ],
     ],
 
 ];

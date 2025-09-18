@@ -13,13 +13,16 @@ class RolesAndPermissionsSeeder extends Seeder
         // Vider le cache Spatie
         app()[\Spatie\Permission\PermissionRegistrar::class]->forgetCachedPermissions();
 
-        // Choisis explicitement le guard pour tes rôles/permissions.
-        // Par défaut, on reste sur 'web'. Si tu veux un guard API, change 'web' par 'api'.
+        // Guard utilisé pour les rôles/permissions
         $guard = 'web';
 
         // --- Permissions par domaine
         $perms = [
-            // Patients
+            // 🌟 Alias simples (lecture/écriture)
+            'patients.read', 'patients.write',
+            'visites.read',  'visites.write',
+
+            // Patients (granulaire – on les garde)
             'patients.view', 'patients.create', 'patients.update', 'patients.delete', 'patients.orient',
 
             // Consultations
@@ -69,16 +72,62 @@ class RolesAndPermissionsSeeder extends Seeder
             );
         }
 
-        // --- Rôles
+        // --- Rôles (répartition cohérente)
         $roles = [
-            'admin'        => $perms, // admin a tout
-            'reception'    => ['patients.view','patients.create','patients.orient','stats.view'],
-            'medecin'      => ['patients.view','consultations.view','consultations.create','consultations.update','stats.view'],
-            'infirmier'    => ['patients.view','consultations.view','pansement.view','pansement.create','pansement.update','stats.view'],
-            'laborantin'   => ['labo.view','labo.request.create','labo.result.write','stats.view'],
-            'pharmacien'   => ['pharma.stock.view','pharma.sale.create','pharma.ordonnance.validate','stats.view'],
-            'caissier'     => ['finance.invoice.view','finance.invoice.create','finance.payment.create','stats.view'],
-            'gestionnaire' => ['users.view','stats.view'],
+            // Admin : tout
+            'admin' => $perms,
+
+            // Réception : crée/voit patients & visites
+            'reception' => [
+                'patients.read','patients.write',
+                'patients.view','patients.create','patients.orient',
+                'visites.read','visites.write',
+                'stats.view',
+            ],
+
+            // Médecin : lecture/écriture patients & visites, consultations
+            'medecin' => [
+                'patients.read',
+                'visites.read','visites.write',
+                'consultations.view','consultations.create','consultations.update',
+                'stats.view',
+            ],
+
+            // Infirmier : lecture patients, écritures pansements & visites
+            'infirmier' => [
+                'patients.read',
+                'visites.read','visites.write',
+                'pansement.view','pansement.create','pansement.update',
+                'stats.view',
+            ],
+
+            // Laborantin : labo + lecture visites
+            'laborantin' => [
+                'labo.view','labo.request.create','labo.result.write',
+                'visites.read',
+                'stats.view',
+            ],
+
+            // Pharmacien : pharmacie + lecture visites
+            'pharmacien' => [
+                'pharma.stock.view','pharma.sale.create','pharma.ordonnance.validate',
+                'visites.read',
+                'stats.view',
+            ],
+
+            // Caissier : finance + lecture visites
+            'caissier' => [
+                'finance.invoice.view','finance.invoice.create','finance.payment.create',
+                'visites.read',
+                'stats.view',
+            ],
+
+            // Gestionnaire : gestion des users + stats + lecture visites
+            'gestionnaire' => [
+                'users.view',
+                'visites.read',
+                'stats.view',
+            ],
         ];
 
         foreach ($roles as $roleName => $allowed) {
@@ -86,7 +135,7 @@ class RolesAndPermissionsSeeder extends Seeder
                 ['name' => $roleName, 'guard_name' => $guard],
                 ['name' => $roleName, 'guard_name' => $guard]
             );
-            // On s’assure que les permissions référencées existent bien pour ce guard
+
             $allowedWithGuard = Permission::whereIn('name', $allowed)
                 ->where('guard_name', $guard)
                 ->get();
