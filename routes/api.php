@@ -46,6 +46,10 @@ Route::prefix('v1')->group(function () {
             // Personnels (/api/v1/admin/personnels)
             Route::apiResource('personnels', PersonnelController::class)
                 ->parameters(['personnels' => 'personnel']);
+
+            // 🔎 Personnel par user → /api/v1/admin/personnels/by-user/{user_id}
+            Route::get('personnels/by-user/{user_id}', [PersonnelController::class, 'byUser'])
+                ->name('v1.personnels.by_user');
         });
 
     // ── Patients (/api/v1/patients) ───────────────────────────────────────
@@ -73,7 +77,7 @@ Route::prefix('v1')->group(function () {
     });
 
     // ── Visites (/api/v1/visites) ─────────────────────────────────────────
-    // NB: si tu veux garder ces abilities, ajoute 'visites.read' / 'visites.write' à ton seeder.
+    // NB: ajoute 'visites.read' / 'visites.write' à ton seeder si tu gardes ces abilities
     Route::middleware(['auth:sanctum','throttle:auth'])->group(function () {
         Route::get(  'visites',      [VisiteController::class,'index'])
             ->middleware('ability:visites.read')->name('v1.visites.index');
@@ -89,7 +93,6 @@ Route::prefix('v1')->group(function () {
     });
 
     // ── Laboratoire (/api/v1/laboratoire) ─────────────────────────────────
-    // Mappage vers tes permissions seeder: labo.view / labo.request.create / labo.result.write
     Route::middleware(['auth:sanctum','throttle:auth'])->group(function () {
         Route::get(   'laboratoire',               [LaboratoireController::class, 'index'])
             ->middleware('ability:labo.view')->name('v1.laboratoire.index');
@@ -157,7 +160,7 @@ Route::prefix('v1')->group(function () {
             ->middleware('ability:finance.payment.create');
     });
 
-    // ── Pédiatrie (/api/v1/pediatrie) + Corbeille (/api/v1/pediatrie-corbeille) ─
+    // ── Pédiatrie (/api/v1/pediatrie) + corbeille ─────────────────────────
     Route::middleware(['auth:sanctum','throttle:auth'])->group(function () {
         Route::get(   'pediatrie',              [PediatrieController::class, 'index'])
             ->middleware('ability:pediatrie.view')->name('v1.pediatrie.index');

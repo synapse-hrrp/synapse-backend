@@ -11,6 +11,7 @@ use Spatie\Permission\Traits\HasRoles;
 class User extends Authenticatable
 {
     use HasApiTokens, HasFactory, Notifiable, HasRoles;
+
     protected $guard_name = 'web';
 
     protected $fillable = [
@@ -21,7 +22,6 @@ class User extends Authenticatable
         'is_active',
         'last_login_at',
         'last_login_ip',
-        // ❌ plus de service_id ici
     ];
 
     protected $hidden = ['password','remember_token'];
@@ -32,30 +32,26 @@ class User extends Authenticatable
     {
         return [
             'email_verified_at' => 'datetime',
-            'password'          => 'hashed',
+            'password'          => 'hashed',   // garde ça pour hasher auto
             'last_login_at'     => 'datetime',
             'is_active'         => 'boolean',
         ];
     }
 
-    /** Toujours stocker l'email en minuscule et trim. */
     public function setEmailAttribute(?string $value): void
     {
         $this->attributes['email'] = $value ? mb_strtolower(trim($value)) : null;
     }
 
-    /** Scope : utilisateurs actifs uniquement. */
     public function scopeActive($query)
     {
         return $query->where('is_active', true);
     }
 
-    /** Scope : recherche simple (nom / email / téléphone + champs personnel). */
     public function scopeSearch($query, ?string $term)
     {
         if (!$term) return $query;
-
-        $like = '%' . preg_replace('/\s+/', '%', trim($term)) . '%';
+        $like = '%'.preg_replace('/\s+/', '%', trim($term)).'%';
 
         return $query->where(function ($q) use ($like) {
             $q->where('name', 'like', $like)
@@ -70,13 +66,8 @@ class User extends Authenticatable
         });
     }
 
-    /** Relation 1–1 vers la fiche RH. */
     public function personnel()
     {
         return $this->hasOne(\App\Models\Personnel::class);
     }
-
-    // ❌ On supprime:
-    // - services() (belongsToMany)
-    // - service()  (belongsTo avec users.service_id)
 }
