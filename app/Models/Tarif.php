@@ -20,7 +20,7 @@ class Tarif extends Model
         'montant',
         'devise',
         'is_active',
-        'service_id',
+        'service_slug',
     ];
 
     protected $casts = [
@@ -34,7 +34,6 @@ class Tarif extends Model
             if (!$t->id) {
                 $t->id = (string) Str::uuid();
             }
-            // Normalisations utiles
             if ($t->code) {
                 $t->code = strtoupper(trim($t->code));
             }
@@ -53,13 +52,13 @@ class Tarif extends Model
         });
     }
 
-    // Relations
+    // Relation avec Service via le slug
     public function service()
     {
-        return $this->belongsTo(Service::class);
+        return $this->belongsTo(Service::class, 'service_slug', 'slug');
     }
 
-    // Scopes pratiques (optionnels)
+    // Scopes
     public function scopeActifs($q)
     {
         return $q->where('is_active', true);
@@ -70,8 +69,8 @@ class Tarif extends Model
         return $q->where('code', strtoupper(trim($code)));
     }
 
-    public function scopeForService($q, ?int $serviceId)
+    public function scopeForService($q, ?string $slug)
     {
-        return $serviceId ? $q->where('service_id', $serviceId) : $q;
+        return $slug ? $q->where('service_slug', $slug) : $q;
     }
 }

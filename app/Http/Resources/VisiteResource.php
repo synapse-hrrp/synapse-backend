@@ -24,7 +24,7 @@ class VisiteResource extends JsonResource
             // Service
             'service' => [
                 'id'   => $this->service_id,
-                'code' => $this->whenLoaded('service', fn() => $this->service?->code),
+                'slug' => $this->whenLoaded('service', fn() => $this->service?->slug),
                 'name' => $this->whenLoaded('service', fn() => $this->service?->name),
             ],
 
@@ -49,7 +49,7 @@ class VisiteResource extends JsonResource
             'statut'               => $this->statut,
             'clos_at'              => $this->clos_at?->toISOString(),
 
-            // Prix (minimal)
+            // Prix (aligné à Tarif.montant)
             'prix' => [
                 'tarif_id' => $this->tarif_id,
                 'tarif'    => $this->whenLoaded('tarif', fn () => [

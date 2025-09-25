@@ -7,6 +7,7 @@ use App\Http\Controllers\Api\AuthController;
 use App\Http\Controllers\Api\Admin\UserManagementController;
 use App\Http\Controllers\Api\Admin\PersonnelController;
 use App\Http\Controllers\Api\ServiceController;
+use App\Http\Controllers\IncomingController;
 
 use App\Http\Controllers\Api\ConsultationController;
 use App\Http\Controllers\Api\PatientController;
@@ -32,6 +33,8 @@ use App\Http\Controllers\Api\SanitaireController;
 use App\Http\Controllers\Api\KinesitherapieController;
 use App\Http\Controllers\Api\AruController;
 use App\Http\Controllers\Api\BlocOperatoireController;
+use App\Http\Controllers\Api\MedecineController;
+
 
 Route::prefix('v1')->group(function () {
 
@@ -63,6 +66,9 @@ Route::prefix('v1')->group(function () {
     // ── Services (slug scopé) ───────────────────────────────────────────
     Route::apiResource('services', ServiceController::class)
         ->scoped(['service' => 'slug']);
+
+    Route::post('{service}/incoming', [IncomingController::class, 'store'])
+        ->name('v1.services.incoming');
 
     // ── Patients (/api/v1/patients) ───────────────────────────────────────
     Route::middleware(['auth:sanctum','throttle:auth'])->group(function () {
@@ -488,4 +494,26 @@ Route::prefix('v1')->group(function () {
         Route::delete('consultations/{id}/force',      [ConsultationController::class, 'forceDestroy'])
             ->middleware('ability:consultations.delete')->name('v1.consultations.force');
     });
+
+    // ── Médecine (/api/v1/medecines) ────────────────────────────────────────
+    Route::middleware(['auth:sanctum','throttle:auth'])->group(function () {
+        Route::get(   'medecines',               [MedecineController::class, 'index'])
+            ->middleware('ability:medecine.view')->name('v1.medecines.index');
+
+        Route::post(  'medecines',               [MedecineController::class, 'store'])
+            ->middleware('ability:medecine.create')->name('v1.medecines.store');
+
+        Route::get(   'medecines/{medecine}',    [MedecineController::class, 'show'])
+            ->middleware('ability:medecine.view')->name('v1.medecines.show');
+
+        Route::patch( 'medecines/{medecine}',    [MedecineController::class, 'update'])
+            ->middleware('ability:medecine.update')->name('v1.medecines.update');
+
+        Route::put(   'medecines/{medecine}',    [MedecineController::class, 'update'])
+            ->middleware('ability:medecine.update');
+
+        Route::delete('medecines/{medecine}',    [MedecineController::class, 'destroy'])
+            ->middleware('ability:medecine.delete')->name('v1.medecines.destroy');
+    });
+
 });

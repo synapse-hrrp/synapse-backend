@@ -2,6 +2,7 @@
 
 namespace App\Http\Controllers\Api;
 
+use App\Events\VisiteCreated;
 use App\Http\Controllers\Controller;
 use App\Http\Requests\VisiteStoreRequest;
 use App\Http\Requests\VisiteUpdateRequest;
@@ -25,6 +26,41 @@ class VisiteController extends Controller
 
         $data = $request->validated();
 
+        // 🔁 Convertir service_slug -> service_id (AVANT toute vérification)
+        $selectedServiceSlug = null;
+        if (!empty($data['service_slug'])) {
+            $resolved = Service::query()
+                ->select(['id','slug','is_active'])
+                ->where('slug', $data['service_slug'])
+                ->first();
+
+            if (! $resolved) {
+                return response()->json(['message' => 'Service introuvable'], 422);
+            }
+
+            // Si les deux sont fournis, ils doivent correspondre
+            if (!empty($data['service_id']) && (string)$data['service_id'] !== (string)$resolved->id) {
+                return response()->json(['message' => 'service_id et service_slug ne correspondent pas'], 422);
+            }
+
+            $data['service_id'] = (int) $resolved->id; // (si UUID chez toi, enlève le cast)
+            $selectedServiceSlug = $resolved->slug;
+            unset($data['service_slug']);
+        }
+
+        // 0) Service doit exister & être actif (optionnel mais utile)
+        if (! empty($data['service_id'])) {
+            $service = Service::query()->select(['slug','is_active'])->whereKey($data['service_id'])->first();
+            if (! $service) {
+                return response()->json(['message' => 'Service introuvable'], 422);
+            }
+            if ($service->is_active === 0 || $service->is_active === false) {
+                return response()->json(['message' => 'Service inactif'], 422);
+            }
+            // si pas déjà résolu via slug plus haut
+            $selectedServiceSlug = $selectedServiceSlug ?: $service->slug;
+        }
+
         // 1) Récupérer le Personnel de l'utilisateur connecté (agent)
         $agentPersonnel = $request->user()?->personnel;
         if (! $agentPersonnel) {
@@ -36,74 +72,65 @@ class VisiteController extends Controller
         $data['agent_nom'] = $agentPersonnel->full_name
             ?? trim(($agentPersonnel->first_name ?? '').' '.($agentPersonnel->last_name ?? ''));
 
-        // 2) Snapshot du médecin (optionnel suivant tes règles)
+        // 2) Snapshot du médecin (optionnel)
         if (!empty($data['medecin_id'])) {
             $medecin = Personnel::query()->whereKey($data['medecin_id'])->firstOrFail();
             $data['medecin_nom'] = $medecin->full_name
                 ?? trim(($medecin->first_name ?? '').' '.($medecin->last_name ?? ''));
         } else {
-            // si pas de medecin_id, on laisse medecin_nom éventuel tel quel ou null
             $data['medecin_nom'] = $data['medecin_nom'] ?? null;
         }
 
-        // 3) Défaut heure_arrivee si non fourni
+        // 3) heure_arrivee par défaut
         $data['heure_arrivee'] = $data['heure_arrivee'] ?? now();
 
-        // 4) Normaliser / sécuriser 'statut' pour coller au schéma DB
+        // 4) Statut : garder uniquement ceux gérés par le modèle (sinon on laisse le default du model)
         if (isset($data['statut'])) {
-            $normalized = str_replace('_', ' ', $data['statut']); // en_cours -> en cours
-            $allowed    = ['en cours', 'clos', 'annule']; // adapte à tes valeurs réelles en DB
-            if (in_array($normalized, $allowed, true)) {
-                $data['statut'] = $normalized;
-            } else {
-                unset($data['statut']); // laisse la DB mettre son DEFAULT
+            $allowed = ['EN_ATTENTE','A_ENCAISSER','PAYEE','CLOTUREE'];
+            if (! in_array($data['statut'], $allowed, true)) {
+                unset($data['statut']);
             }
         }
 
-        // 5) ------- PRIX AUTO depuis TARIF (minimal) -------
-        $data['devise'] = $data['devise'] ?? 'XAF';
+        // 5) ------- TARIF : résoudre tarif_id / tarif_code (cohérence via service_slug) -------
+        // Laisse le modèle fixer la devise via le tarif (sinon mets 'XAF' si tu veux forcer une valeur)
+        if (array_key_exists('devise', $data) && empty($data['devise'])) {
+            unset($data['devise']); // le modèle Visite remplira depuis $v->tarif->devise (défaut XAF)
+        }
 
         $tarif = null;
 
-        // Priorité à tarif_id
         if (!empty($data['tarif_id'])) {
             $tarif = Tarif::query()
-                ->where('id', $data['tarif_id'])
+                ->whereKey($data['tarif_id'])
                 ->where('is_active', true)
                 ->first();
         }
 
-        // Sinon tarif_code (pratique pour le front)
-        if (!$tarif && $request->filled('tarif_code')) {
+        if (! $tarif && $request->filled('tarif_code')) {
             $tarif = Tarif::query()
                 ->where('code', strtoupper(trim($request->input('tarif_code'))))
                 ->where('is_active', true)
                 ->first();
             if ($tarif) {
-                $data['tarif_id'] = $tarif->id; // garder la trace
+                $data['tarif_id'] = $tarif->id;
             }
         }
 
-        // Cohérence service/tarif si le tarif est rattaché à un service
-        if ($tarif && $tarif->service_id && (int)$data['service_id'] !== (int)$tarif->service_id) {
+        // ✅ Cohérence service/tarif via service_slug (nouveau schéma)
+        if ($tarif && $tarif->service_slug && $selectedServiceSlug && $tarif->service_slug !== $selectedServiceSlug) {
             return response()->json([
                 'message' => "Le tarif choisi n'appartient pas au service sélectionné."
             ], 422);
         }
 
-        // Poser montant_prevu/devise depuis le tarif si trouvé, sinon garder la valeur envoyée ou 0
-        if ($tarif) {
-            $data['montant_prevu'] = $data['montant_prevu'] ?? (float)$tarif->montant;
-            $data['devise']        = $data['devise'] ?: ($tarif->devise ?? 'XAF');
-        }
-        $data['montant_prevu'] = isset($data['montant_prevu']) ? (float)$data['montant_prevu'] : 0.0;
-
-        // Pricing minimal : pas de remise/exonération -> dû = prévu
-        $data['montant_du'] = $data['montant_prevu'];
+        // ⚠️ Ne pas calculer ici montant_prevu/devise/montant_du : le modèle Visite le fera dans booted()
 
         // 6) Ne garder QUE les colonnes réellement présentes en DB
         $columns = Schema::getColumnListing('visites');
         $data    = array_intersect_key($data, array_flip($columns));
+
+        $userId = optional($request->user())->id;
 
         $visite = DB::transaction(function () use ($data, $request) {
             $v = Visite::create($data);
@@ -119,11 +146,16 @@ class VisiteController extends Controller
                         ],
                     ]);
                 } catch (\Throwable $e) {
-                    // silencieux : l’affectation est optionnelle
+                    // silencieux
                 }
             }
 
             return $v;
+        });
+
+        // ✅ Déclencher l’event APRÈS COMMIT + avec l’ID de l’acteur
+        DB::afterCommit(function () use ($visite, $userId) {
+            event(new VisiteCreated($visite->id, $userId));
         });
 
         // Charger les relations
@@ -150,7 +182,6 @@ class VisiteController extends Controller
         $q = Visite::with($with)
             ->when($request->filled('patient_id'), fn($b)=>$b->where('patient_id',$request->patient_id))
             ->when($request->filled('service_id'), fn($b)=>$b->where('service_id',$request->service_id))
-            // bonus: filtrer par slug si fourni ?service_slug=medecine
             ->when($request->filled('service_slug'), function ($b) use ($request) {
                 $serviceId = Service::where('slug', $request->service_slug)->value('id');
                 if ($serviceId) $b->where('service_id', $serviceId);
@@ -200,18 +231,62 @@ class VisiteController extends Controller
             return response()->json(['message'=>'Forbidden: visites.write requis'], 403);
         }
 
-        $v = Visite::findOrFail($id);
+        $v    = Visite::findOrFail($id);
         $data = $request->validated();
 
-        // Clôture : auto-renseigner clos_at/closed_at si statut passe à 'clos'
-        if (($data['statut'] ?? null) === 'clos') {
-            if (Schema::hasColumn('visites','clos_at') && !$v->clos_at && !isset($data['clos_at'])) {
+        // 🔁 Supporter service_slug à l’update (convertir en service_id)
+        if (!empty($data['service_slug'])) {
+            $resolvedId = Service::where('slug', $data['service_slug'])->value('id');
+            if (! $resolvedId) {
+                return response()->json(['message' => 'Service introuvable'], 422);
+            }
+            $data['service_id'] = (int) $resolvedId; // (si UUID, enlève le cast)
+            unset($data['service_slug']);
+        }
+
+        // Clôture : si statut devient 'CLOTUREE', auto-remplir clos_at/closed_at si présent dans le schéma
+        if (($data['statut'] ?? null) === 'CLOTUREE') {
+            if (Schema::hasColumn('visites','clos_at') && ! $v->clos_at && ! isset($data['clos_at'])) {
                 $data['clos_at'] = now();
             }
-            if (Schema::hasColumn('visites','closed_at') && !$v->closed_at && !isset($data['closed_at'])) {
+            if (Schema::hasColumn('visites','closed_at') && ! $v->closed_at && ! isset($data['closed_at'])) {
                 $data['closed_at'] = now();
             }
         }
+
+        // Statuts autorisés seulement
+        if (isset($data['statut'])) {
+            $allowed = ['EN_ATTENTE','A_ENCAISSER','PAYEE','CLOTUREE'];
+            if (! in_array($data['statut'], $allowed, true)) {
+                unset($data['statut']);
+            }
+        }
+
+        // (Optionnel) si on modifie tarif_id, vérifier qu'il correspond au service (via slug)
+        if (!empty($data['tarif_id'])) {
+            $tarif = Tarif::query()->whereKey($data['tarif_id'])->first();
+            if ($tarif && $tarif->service_slug) {
+                // service cible après update (sinon service actuel)
+                $serviceIdAfter = $data['service_id'] ?? $v->service_id;
+                $serviceSlug    = Service::whereKey($serviceIdAfter)->value('slug');
+                if ($serviceSlug && $tarif->service_slug !== $serviceSlug) {
+                    return response()->json([
+                        'message' => "Le tarif choisi n'appartient pas au service sélectionné."
+                    ], 422);
+                }
+            }
+        }
+        // 2) Snapshot du médecin (obligatoire)
+        if (!empty($data['medecin_id'])) {
+            $medecin = Personnel::query()->whereKey($data['medecin_id'])->firstOrFail();
+            $data['medecin_nom'] = $medecin->full_name
+                ?? trim(($medecin->first_name ?? '').' '.($medecin->last_name ?? ''));
+        } else {
+            return response()->json([
+                'message' => "Impossible de créer la visite : un médecin est requis."
+            ], 422);
+        }
+
 
         // Ne mettre à jour que les colonnes existantes
         $columns = Schema::getColumnListing('visites');

@@ -12,33 +12,32 @@ class MaterniteUpdateRequest extends FormRequest
     {
         return [
             'patient_id' => ['sometimes','uuid','exists:patients,id'],
-            'visite_id'  => ['sometimes','nullable','uuid','exists:visites,id'],
+            'visite_id'  => ['sometimes','uuid','exists:visites,id'],
 
-            'date_acte'  => ['sometimes','nullable','date'],
+            'date_acte'  => ['sometimes','date'],
+            'motif'      => ['sometimes','string','max:190'],
+            'diagnostic' => ['sometimes','string','max:190'],
 
-            'motif'      => ['sometimes','nullable','string','max:190'],
-            'diagnostic' => ['sometimes','nullable','string','max:190'],
+            'terme_grossesse'        => ['sometimes','string','max:50'],
+            'age_gestationnel'       => ['sometimes','string','max:50'],
+            'mouvements_foetaux'     => ['sometimes','boolean'],
+            'tension_arterielle'     => ['sometimes','string','max:20'],
+            'temperature'            => ['sometimes','numeric','min:30','max:45'],
+            'frequence_cardiaque'    => ['sometimes','integer','min:0','max:300'],
+            'frequence_respiratoire' => ['sometimes','integer','min:0','max:120'],
+            'hauteur_uterine'        => ['sometimes','string','max:50'],
+            'presentation'           => ['sometimes','string','max:50'],
+            'battements_cardiaques_foetaux' => ['sometimes','string','max:50'],
+            'col_uterin'             => ['sometimes','string','max:50'],
+            'pertes'                 => ['sometimes','string','max:190'],
 
-            'terme_grossesse'    => ['sometimes','nullable','string','max:50'],
-            'age_gestationnel'   => ['sometimes','nullable','integer','min:0','max:45'],
-            'mouvements_foetaux' => ['sometimes','nullable','boolean'],
+            'examen_clinique'        => ['sometimes','string'],
+            'traitements'            => ['sometimes','string'],
+            'observation'            => ['sometimes','string','max:1000'],
 
-            'tension_arterielle'     => ['sometimes','nullable','string','max:20'],
-            'temperature'            => ['sometimes','nullable','numeric','between:30,45'],
-            'frequence_cardiaque'    => ['sometimes','nullable','integer','min:0','max:250'],
-            'frequence_respiratoire' => ['sometimes','nullable','integer','min:0','max:80'],
+            'statut' => ['sometimes','in:en_cours,clos,annule'],
 
-            'hauteur_uterine'              => ['sometimes','nullable','numeric','between:0,60'],
-            'presentation'                 => ['sometimes','nullable','string','max:50'],
-            'battements_cardiaques_foetaux'=> ['sometimes','nullable','integer','min:0','max:240'],
-            'col_uterin'                   => ['sometimes','nullable','string','max:100'],
-            'pertes'                       => ['sometimes','nullable','string','max:100'],
-
-            'examen_clinique' => ['sometimes','nullable','string'],
-            'traitements'     => ['sometimes','nullable','string'],
-            'observation'     => ['sometimes','nullable','string'],
-
-            'statut' => ['sometimes','nullable','in:en_cours,clos,annule'],
+            'soignant_id' => ['prohibited'], // 🔒
         ];
     }
 }

@@ -72,32 +72,32 @@ class ConsultationController extends Controller
     {
         $data = $request->validated();
 
-        // soignant = user connecté (traçabilité)
-        if ($request->user()) {
-            $data['soignant_id'] = $request->user()->id;
-        }
-
-        // déduire la visite si absente
-        if (empty($data['visite_id'])) {
+        // Déduire la visite si absente (dernière visite du patient)
+        if (empty($data['visite_id']) && !empty($data['patient_id'])) {
             $data['visite_id'] = Visite::where('patient_id', $data['patient_id'])
                 ->orderByDesc('heure_arrivee')
                 ->value('id');
         }
 
-        // Fallback medecin_id : payload > visite.medecin_id > soignant_id
-        if (empty($data['medecin_id'])) {
-            $medecinFromVisite = null;
-            if (!empty($data['visite_id'])) {
-                $medecinFromVisite = Visite::where('id', $data['visite_id'])->value('medecin_id');
-            } else {
-                $medecinFromVisite = Visite::where('patient_id', $data['patient_id'])
-                    ->orderByDesc('heure_arrivee')
-                    ->value('medecin_id');
+        // Si visite présente → verrouiller depuis la visite
+        if (!empty($data['visite_id'])) {
+            if ($v = Visite::find($data['visite_id'])) {
+                // patient/service depuis la visite
+                $data['patient_id'] = $data['patient_id'] ?? $v->patient_id;
+                // soignant & medecin = medecin de la visite
+                $data['soignant_id'] = $v->medecin_id;
+                $data['medecin_id']  = $data['medecin_id'] ?? $v->medecin_id;
             }
-            $data['medecin_id'] = $medecinFromVisite ?: ($data['soignant_id'] ?? null);
         }
 
-        // défauts
+        // Bloquer si pas de médecin disponible
+        if (empty($data['medecin_id'])) {
+            return response()->json([
+                'message' => "Impossible de créer la consultation : aucune visite avec médecin associé."
+            ], 422);
+        }
+
+        // Défauts
         $data['date_acte'] = $data['date_acte'] ?? now();
         $data['statut']    = $data['statut'] ?? 'en_cours';
 
@@ -120,32 +120,31 @@ class ConsultationController extends Controller
     {
         $data = $request->validated();
 
-        // redéduire la visite si absente dans payload (facultatif)
+        // Redéduire la visite si absente mais patient présent/implicite
         if ((!array_key_exists('visite_id',$data) || empty($data['visite_id'])) && ($data['patient_id'] ?? $consultation->patient_id)) {
             $pid = $data['patient_id'] ?? $consultation->patient_id;
             $deduced = Visite::where('patient_id', $pid)->orderByDesc('heure_arrivee')->value('id');
             if ($deduced) $data['visite_id'] = $deduced;
         }
 
-        // medecin_id : on n’écrase pas s’il n’est pas envoyé.
-        // (Si tu veux appliquer le même fallback que dans store() quand il est absent,
-        // dé-commente la section ci-dessous.)
-        
-        if (!array_key_exists('medecin_id', $data) || empty($data['medecin_id'])) {
-            $pid = $data['patient_id'] ?? $consultation->patient_id;
-            $vid = $data['visite_id']  ?? $consultation->visite_id;
-
-            $medecinFromVisite = null;
-            if ($vid) {
-                $medecinFromVisite = Visite::where('id', $vid)->value('medecin_id');
-            } else {
-                $medecinFromVisite = Visite::where('patient_id', $pid)
-                    ->orderByDesc('heure_arrivee')
-                    ->value('medecin_id');
+        // Si on a une visite → verrouiller soignant_id & medecin_id = medecin de la visite
+        if (!empty($data['visite_id'])) {
+            if ($v = Visite::find($data['visite_id'])) {
+                $data['patient_id'] = $data['patient_id'] ?? $v->patient_id;
+                $data['soignant_id'] = $v->medecin_id;
+                // si rien envoyé, recoller le médecin de la visite
+                if (!array_key_exists('medecin_id', $data) || empty($data['medecin_id'])) {
+                    $data['medecin_id'] = $v->medecin_id;
+                }
             }
-            $data['medecin_id'] = $medecinFromVisite ?: $consultation->soignant_id;
         }
-        
+
+        // Sécurité : s’assurer qu’un médecin reste défini
+        if (empty($data['medecin_id']) && empty($consultation->medecin_id)) {
+            return response()->json([
+                'message' => "Impossible de mettre à jour : aucun médecin associé."
+            ], 422);
+        }
 
         $consultation->fill($data)->save();
         $consultation->load(['patient','visite','soignant:id,name,email','medecin:id,name,email']);
@@ -153,7 +152,7 @@ class ConsultationController extends Controller
         return new ConsultationResource($consultation);
     }
 
-    // DELETE /api/v1/consultations/{consultation}  -> corbeille (soft delete)
+    // DELETE /api/v1/consultations/{consultation}
     public function destroy(Consultation $consultation)
     {
         $consultation->delete();

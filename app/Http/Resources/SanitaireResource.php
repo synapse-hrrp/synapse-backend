@@ -9,45 +9,42 @@ class SanitaireResource extends JsonResource
     public function toArray($request)
     {
         return [
-            'id'    => $this->id,
+            'id'               => $this->id,
+            'patient_id'       => $this->patient_id,
+            'visite_id'        => $this->visite_id,
+            'soignant_id'      => $this->soignant_id,
 
-            'patient_id'  => $this->patient_id,
-            'visite_id'   => $this->visite_id,
-            'soignant_id' => $this->soignant_id,
+            'date_acte'        => optional($this->date_acte)->toISOString(),
+            'date_debut'       => optional($this->date_debut)->toISOString(),
+            'date_fin'         => optional($this->date_fin)->toISOString(),
 
-            'date_acte'   => $this->date_acte,
-            'date_debut'  => $this->date_debut,
-            'date_fin'    => $this->date_fin,
+            'type_action'      => $this->type_action,
+            'zone'             => $this->zone,
+            'sous_zone'        => $this->sous_zone,
+            'niveau_risque'    => $this->niveau_risque,
 
-            'type_action'   => $this->type_action,
-            'zone'          => $this->zone,
-            'sous_zone'     => $this->sous_zone,
-            'niveau_risque' => $this->niveau_risque,
+            'produits_utilises'=> $this->produits_utilises,
+            'equipe'           => $this->equipe, // cast array côté modèle
+            'duree_minutes'    => $this->duree_minutes,
+            'cout'             => is_null($this->cout) ? null : (float)$this->cout,
 
-            'produits_utilises' => $this->produits_utilises,
-            'equipe'            => $this->equipe,
-            'duree_minutes'     => $this->duree_minutes,
-            'cout'              => $this->cout,
+            'observation'      => $this->observation,
+            'statut'           => $this->statut,
 
-            'observation' => $this->observation,
-            'statut'      => $this->statut,
-
-            'patient'  => $this->whenLoaded('patient', function () { return [
-                'id' => $this->patient->id,
-                'nom' => $this->patient->nom,
-                'prenom' => $this->patient->prenom,
-                'numero_dossier' => $this->patient->numero_dossier,
-            ];}),
+            // Relations minimales
+            'patient'  => $this->whenLoaded('patient'),
             'visite'   => $this->whenLoaded('visite'),
-            'soignant' => $this->whenLoaded('soignant', function () { return [
-                'id'    => $this->soignant->id,
-                'name'  => $this->soignant->name,
-                'email' => $this->soignant->email,
-            ];}),
+            'soignant' => $this->whenLoaded('soignant', function () {
+                return [
+                    'id'    => $this->soignant->id,
+                    'name'  => $this->soignant->name ?? null,
+                    'email' => $this->soignant->email ?? null,
+                ];
+            }),
 
-            'created_at' => $this->created_at,
-            'updated_at' => $this->updated_at,
-            'deleted_at' => $this->deleted_at,
+            'created_at' => optional($this->created_at)->toISOString(),
+            'updated_at' => optional($this->updated_at)->toISOString(),
+            'deleted_at' => optional($this->deleted_at)->toISOString(),
         ];
     }
 }

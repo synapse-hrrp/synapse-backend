@@ -12,17 +12,12 @@ use Illuminate\Http\Request;
 
 class MaterniteController extends Controller
 {
-    // GET /api/v1/maternite
-    // Filtres: ?patient_id=…&statut=…&q=…&sort=-date_acte&limit=20
-    // Corbeille: ?only_trashed=1 (seulement corbeille) | ?with_trashed=1 (inclure corbeille)
     public function index(Request $request)
     {
         $patientId   = (string) $request->query('patient_id', '');
         $statut      = (string) $request->query('statut', '');
         $q           = (string) $request->query('q', '');
         $sortRaw     = (string) $request->query('sort', '-date_acte');
-        $onlyTrashed = $request->boolean('only_trashed', false);
-        $withTrashed = $request->boolean('with_trashed', false);
 
         $field = ltrim($sortRaw, '-');
         $dir   = str_starts_with($sortRaw, '-') ? 'desc' : 'asc';
@@ -31,8 +26,6 @@ class MaterniteController extends Controller
         }
 
         $query = Maternite::query()
-            ->when($onlyTrashed, fn($q) => $q->onlyTrashed())
-            ->when(!$onlyTrashed && $withTrashed, fn($q) => $q->withTrashed())
             ->with(['patient','visite','soignant:id,name,email'])
             ->when($patientId !== '', fn($q2) => $q2->where('patient_id', $patientId))
             ->when($statut !== '', fn($q2) => $q2->where('statut', $statut))
@@ -54,26 +47,35 @@ class MaterniteController extends Controller
             'page'  => $items->currentPage(),
             'limit' => $items->perPage(),
             'total' => $items->total(),
-            'only_trashed' => $onlyTrashed,
-            'with_trashed' => $withTrashed,
         ]);
     }
 
-    // POST /api/v1/maternite
     public function store(MaterniteStoreRequest $request)
     {
         $data = $request->validated();
 
-        // soignant = user connecté
-        if ($request->user()) {
-            $data['soignant_id'] = $request->user()->id;
-        }
-
-        // déduire la visite si absente
-        if (empty($data['visite_id'])) {
+        // déduire visite si absente
+        if (empty($data['visite_id']) && !empty($data['patient_id'])) {
             $data['visite_id'] = Visite::where('patient_id', $data['patient_id'])
                 ->orderByDesc('heure_arrivee')
                 ->value('id');
+        }
+
+        // recaler depuis visite
+        if (!empty($data['visite_id'])) {
+            if ($v = Visite::find($data['visite_id'])) {
+                $data['patient_id']  = $data['patient_id'] ?? $v->patient_id;
+                if (\Illuminate\Support\Facades\Schema::hasColumn('maternites','service_id')) {
+                    $data['service_id'] = $data['service_id'] ?? $v->service_id;
+                }
+                $data['soignant_id'] = $v->medecin_id; // 👈
+            }
+        }
+
+        if (empty($data['soignant_id'])) {
+            return response()->json([
+                'message' => "Impossible de créer l'acte de maternité : aucun médecin n'est associé à la visite."
+            ], 422);
         }
 
         $data['date_acte'] = $data['date_acte'] ?? now();
@@ -86,14 +88,12 @@ class MaterniteController extends Controller
         ))->response()->setStatusCode(201);
     }
 
-    // GET /api/v1/maternite/{maternite}
     public function show(Maternite $maternite)
     {
         $maternite->load(['patient','visite','soignant:id,name,email']);
         return new MaterniteResource($maternite);
     }
 
-    // PATCH/PUT /api/v1/maternite/{maternite}
     public function update(MaterniteUpdateRequest $request, Maternite $maternite)
     {
         $data = $request->validated();
@@ -104,64 +104,34 @@ class MaterniteController extends Controller
             if ($deduced) $data['visite_id'] = $deduced;
         }
 
-        $maternite->fill($data)->save();
-        $maternite->load(['patient','visite','soignant:id,name,email']);
+        if (!empty($data['visite_id'])) {
+            if ($v = Visite::find($data['visite_id'])) {
+                $data['soignant_id'] = $v->medecin_id; // 🔒
+                $data['patient_id']  = $data['patient_id'] ?? $v->patient_id;
+                if (\Illuminate\Support\Facades\Schema::hasColumn('maternites','service_id')) {
+                    $data['service_id']  = $data['service_id']  ?? $v->service_id;
+                }
+            }
+        }
 
-        return new MaterniteResource($maternite);
+        if (empty($data['soignant_id']) && empty($maternite->soignant_id)) {
+            return response()->json([
+                'message' => "Impossible de mettre à jour l'acte de maternité : aucun médecin n'est associé à la visite."
+            ], 422);
+        }
+
+        $maternite->fill($data)->save();
+
+        return new MaterniteResource($maternite->load(['patient','visite','soignant:id,name,email']));
     }
 
-    // DELETE /api/v1/maternite/{maternite} -> corbeille (soft delete)
     public function destroy(Maternite $maternite)
     {
         $maternite->delete();
-
         return response()->json([
             'message' => 'Acte maternité envoyé à la corbeille.',
             'deleted' => true,
             'id'      => $maternite->id,
         ], 200);
-    }
-
-    // GET /api/v1/maternite-corbeille -> liste corbeille
-    public function trash(Request $request)
-    {
-        $perPage = min(max((int)$request->query('limit', 20), 1), 200);
-
-        $items = Maternite::onlyTrashed()
-            ->with(['patient','visite','soignant:id,name,email'])
-            ->orderByDesc('deleted_at')
-            ->paginate($perPage);
-
-        return MaterniteResource::collection($items)->additional([
-            'trash' => true,
-            'page'  => $items->currentPage(),
-            'limit' => $items->perPage(),
-            'total' => $items->total(),
-        ]);
-    }
-
-    // POST /api/v1/maternite/{id}/restore -> restaure depuis corbeille
-    public function restore(string $id)
-    {
-        $item = Maternite::onlyTrashed()->findOrFail($id);
-        $item->restore();
-
-        $item->load(['patient','visite','soignant:id,name,email']);
-
-        return (new MaterniteResource($item))
-            ->additional(['restored' => true]);
-    }
-
-    // DELETE /api/v1/maternite/{id}/force -> suppression définitive
-    public function forceDestroy(string $id)
-    {
-        $item = Maternite::onlyTrashed()->findOrFail($id);
-        $item->forceDelete();
-
-        return response()->json([
-            'message' => 'Acte maternité supprimé définitivement.',
-            'force_deleted' => true,
-            'id' => $id,
-        ]);
     }
 }

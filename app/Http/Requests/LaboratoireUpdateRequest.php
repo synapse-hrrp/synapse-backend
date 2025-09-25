@@ -4,43 +4,33 @@ namespace App\Http\Requests;
 
 use Illuminate\Foundation\Http\FormRequest;
 
-class PansementUpdateRequest extends FormRequest
+class LaboratoireUpdateRequest extends FormRequest
 {
     public function authorize(): bool
     {
         return true;
     }
 
-    protected function prepareForValidation(): void
-    {
-        $map = [
-            'statut'    => 'status',
-            'etat'      => 'etat_plaque',
-            'produits'  => 'produits_utilises'
-        ];
-        $merged = [];
-        foreach ($map as $fr => $en) {
-            if ($this->has($fr)) $merged[$en] = $this->input($fr);
-        }
-        $this->merge($merged);
-    }
-
     public function rules(): array
     {
         return [
-            // tout est nullable en update (PATCH)
-            'patient_id'        => ['sometimes','uuid','exists:patients,id'],
-            'visite_id'         => ['sometimes','nullable','uuid','exists:visites,id'],
-
-            'type'              => ['sometimes','string','max:100'],
-
-            'date_soin'         => ['sometimes','nullable','date'],
-            'observation'       => ['sometimes','nullable','string','max:1000'],
-            'etat_plaque'       => ['sometimes','nullable','string','max:150'],
-            'produits_utilises' => ['sometimes','nullable','string','max:1000'],
-
-            'soignant_id'       => ['sometimes','nullable','uuid','exists:users,id'],
-            'status'            => ['sometimes','nullable','string','in:planifie,en_cours,clos,annule'],
+            'patient_id'    => ['sometimes', 'uuid', 'exists:patients,id'],
+            'visite_id'     => ['sometimes', 'uuid', 'exists:visites,id'],
+            'test_code'     => ['sometimes', 'string', 'max:100'],
+            'test_name'     => ['sometimes', 'string', 'max:255'],
+            'specimen'      => ['sometimes', 'string', 'max:255'],
+            'status'        => ['sometimes', 'in:pending,in_progress,completed,cancelled'],
+            'result_value'  => ['sometimes', 'string', 'max:255'],
+            'unit'          => ['sometimes', 'string', 'max:50'],
+            'ref_range'     => ['sometimes', 'string', 'max:100'],
+            'result_json'   => ['sometimes', 'array'],
+            'price'         => ['sometimes', 'numeric', 'min:0'],
+            'currency'      => ['sometimes', 'string', 'size:3'],
+            'invoice_id'    => ['sometimes', 'uuid', 'exists:invoices,id'],
+            'requested_by'  => ['sometimes', 'uuid', 'exists:users,id'],
+            'requested_at'  => ['sometimes', 'date'],
+            'validated_by'  => ['sometimes', 'uuid', 'exists:users,id'],
+            'validated_at'  => ['sometimes', 'date'],
         ];
     }
 }

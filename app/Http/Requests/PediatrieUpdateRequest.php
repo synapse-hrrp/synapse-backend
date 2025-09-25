@@ -6,13 +6,20 @@ use Illuminate\Foundation\Http\FormRequest;
 
 class PediatrieUpdateRequest extends FormRequest
 {
-    public function authorize(): bool { return true; }
+    public function authorize(): bool
+    {
+        return true;
+    }
 
     public function rules(): array
     {
         return [
             'patient_id'             => ['sometimes','uuid','exists:patients,id'],
             'visite_id'              => ['sometimes','uuid','exists:visites,id'],
+
+            // ⚠️ pas modifiable manuellement, vient de visite.medecin_id
+            'soignant_id'            => ['prohibited'],
+
             'date_acte'              => ['sometimes','date'],
             'motif'                  => ['sometimes','string','max:190'],
             'diagnostic'             => ['sometimes','string','max:190'],
@@ -30,6 +37,29 @@ class PediatrieUpdateRequest extends FormRequest
             'observation'            => ['sometimes','string','max:1000'],
 
             'statut'                 => ['sometimes','in:en_cours,clos,annule'],
+        ];
+    }
+
+    public function attributes(): array
+    {
+        return [
+            'patient_id'             => 'patient',
+            'visite_id'              => 'visite',
+            'soignant_id'            => 'soignant (automatique, ne pas envoyer)',
+            'date_acte'              => 'date de l’acte',
+            'motif'                  => 'motif',
+            'diagnostic'             => 'diagnostic',
+            'poids'                  => 'poids',
+            'taille'                 => 'taille',
+            'temperature'            => 'température',
+            'perimetre_cranien'      => 'périmètre crânien',
+            'saturation'             => 'saturation',
+            'frequence_cardiaque'    => 'fréquence cardiaque',
+            'frequence_respiratoire' => 'fréquence respiratoire',
+            'examen_clinique'        => 'examen clinique',
+            'traitements'            => 'traitements',
+            'observation'            => 'observation',
+            'statut'                 => 'statut',
         ];
     }
 }

@@ -64,22 +64,43 @@ class SmiController extends Controller
     {
         $data = $request->validated();
 
-        // soignant = user connecté
-        if ($request->user()) {
-            $data['soignant_id'] = $request->user()->id;
-        }
-
-        // déduire la visite si absente
-        if (empty($data['visite_id'])) {
+        // 1) Déduire la visite si absente (dernière visite du patient)
+        if (empty($data['visite_id']) && !empty($data['patient_id'])) {
             $data['visite_id'] = Visite::where('patient_id', $data['patient_id'])
                 ->orderByDesc('heure_arrivee')
                 ->value('id');
         }
 
+        // 2) Verrouiller soignant = médecin de la visite
+        if (!empty($data['visite_id'])) {
+            if ($v = Visite::find($data['visite_id'])) {
+                $data['patient_id']  = $data['patient_id'] ?? $v->patient_id;
+                $data['soignant_id'] = $v->medecin_id;
+            }
+        }
+
+        // 3) Contrôle bloquant : médecin requis
+        if (empty($data['soignant_id'])) {
+            return response()->json([
+                'message' => "Impossible de créer le SMI : aucun médecin n'est associé à la visite."
+            ], 422);
+        }
+
+        // 4) Valeurs par défaut
         $data['date_acte'] = $data['date_acte'] ?? now();
         $data['statut']    = $data['statut'] ?? 'en_cours';
 
-        $item = Smi::create($data);
+        // 5) Idempotence par visite : si un SMI existe déjà pour cette visite, on met à jour
+        $item = null;
+        if (!empty($data['visite_id'])) {
+            $item = Smi::where('visite_id', $data['visite_id'])->first();
+        }
+
+        if ($item) {
+            $item->fill($data)->save();
+        } else {
+            $item = Smi::create($data);
+        }
 
         return (new SmiResource(
             $item->load(['patient','visite','soignant:id,name,email'])
@@ -98,11 +119,26 @@ class SmiController extends Controller
     {
         $data = $request->validated();
 
-        // si visite absente, tente de déduire depuis le patient
+        // Si visite absente, tente de déduire depuis le patient
         if ((!array_key_exists('visite_id',$data) || empty($data['visite_id'])) && ($data['patient_id'] ?? $smi->patient_id)) {
             $pid = $data['patient_id'] ?? $smi->patient_id;
             $deduced = Visite::where('patient_id', $pid)->orderByDesc('heure_arrivee')->value('id');
             if ($deduced) $data['visite_id'] = $deduced;
+        }
+
+        // Si on (re)connait la visite, verrouiller le soignant
+        if (!empty($data['visite_id'])) {
+            if ($v = Visite::find($data['visite_id'])) {
+                $data['soignant_id'] = $v->medecin_id; // tjs médecin de la visite
+                $data['patient_id']  = $data['patient_id'] ?? $v->patient_id;
+            }
+        }
+
+        // Médecin doit rester présent
+        if (empty($data['soignant_id']) && empty($smi->soignant_id)) {
+            return response()->json([
+                'message' => "Impossible de mettre à jour le SMI : aucun médecin n'est associé à la visite."
+            ], 422);
         }
 
         $smi->fill($data)->save();

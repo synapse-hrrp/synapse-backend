@@ -33,7 +33,12 @@ class KinesitherapieController extends Controller
         $query = Kinesitherapie::query()
             ->when($onlyTrashed, fn($q) => $q->onlyTrashed())
             ->when(!$onlyTrashed && $withTrashed, fn($q) => $q->withTrashed())
-            ->with(['patient','visite','soignant:id,name,email'])
+            ->with([
+                'patient',
+                'visite',
+                // soignant = Personnel (+ user optionnel pour name/email)
+                'soignant.user',
+            ])
             ->when($patientId !== '', fn($q2) => $q2->where('patient_id', $patientId))
             ->when($statut !== '', fn($q2) => $q2->where('statut', $statut))
             ->when($q !== '', function ($q2) use ($q) {
@@ -54,9 +59,9 @@ class KinesitherapieController extends Controller
         $items   = $query->paginate($perPage);
 
         return KinesitherapieResource::collection($items)->additional([
-            'page'  => $items->currentPage(),
-            'limit' => $items->perPage(),
-            'total' => $items->total(),
+            'page'         => $items->currentPage(),
+            'limit'        => $items->perPage(),
+            'total'        => $items->total(),
             'only_trashed' => $onlyTrashed,
             'with_trashed' => $withTrashed,
         ]);
@@ -67,32 +72,53 @@ class KinesitherapieController extends Controller
     {
         $data = $request->validated();
 
-        // soignant = user connecté
-        if ($request->user()) {
-            $data['soignant_id'] = $request->user()->id;
-        }
-
-        // déduire la visite si absente
-        if (empty($data['visite_id'])) {
+        // Déduire la visite si absente à partir du patient
+        if (empty($data['visite_id']) && !empty($data['patient_id'])) {
             $data['visite_id'] = Visite::where('patient_id', $data['patient_id'])
                 ->orderByDesc('heure_arrivee')
                 ->value('id');
         }
 
+        // Si visite fournie/déduite, verrouiller soignant_id = medecin_id de la visite
+        if (!empty($data['visite_id'])) {
+            if ($v = Visite::find($data['visite_id'])) {
+                $data['patient_id']  = $data['patient_id'] ?? $v->patient_id; // cohérence
+                $data['soignant_id'] = $v->medecin_id; // Personnel.id
+            }
+        }
+
+        // Sécurité : il faut un médecin
+        if (empty($data['soignant_id'])) {
+            return response()->json([
+                'message' => "Impossible de créer l'acte de kinésithérapie : aucun médecin n'est associé à la visite."
+            ], 422);
+        }
+
+        // Defaults
         $data['date_acte'] = $data['date_acte'] ?? now();
         $data['statut']    = $data['statut'] ?? 'planifie';
 
-        $item = Kinesitherapie::create($data);
+        // Idempotence : un seul enregistrement par visite (si c’est ta règle)
+        $item = null;
+        if (!empty($data['visite_id'])) {
+            $item = Kinesitherapie::where('visite_id', $data['visite_id'])->first();
+        }
+
+        if ($item) {
+            $item->fill($data)->save();
+        } else {
+            $item = Kinesitherapie::create($data);
+        }
 
         return (new KinesitherapieResource(
-            $item->load(['patient','visite','soignant:id,name,email'])
+            $item->load(['patient','visite','soignant.user'])
         ))->response()->setStatusCode(201);
     }
 
     // GET /api/v1/kinesitherapie/{kinesitherapie}
     public function show(Kinesitherapie $kinesitherapie)
     {
-        $kinesitherapie->load(['patient','visite','soignant:id,name,email']);
+        $kinesitherapie->load(['patient','visite','soignant.user']);
         return new KinesitherapieResource($kinesitherapie);
     }
 
@@ -101,14 +127,30 @@ class KinesitherapieController extends Controller
     {
         $data = $request->validated();
 
+        // Déduire la visite si manquante à partir du patient
         if ((!array_key_exists('visite_id',$data) || empty($data['visite_id'])) && ($data['patient_id'] ?? $kinesitherapie->patient_id)) {
             $pid = $data['patient_id'] ?? $kinesitherapie->patient_id;
             $deduced = Visite::where('patient_id', $pid)->orderByDesc('heure_arrivee')->value('id');
             if ($deduced) $data['visite_id'] = $deduced;
         }
 
+        // Si on a une visite (nouvelle ou existante), verrouiller soignant_id = medecin_id
+        if (!empty($data['visite_id'])) {
+            if ($v = Visite::find($data['visite_id'])) {
+                $data['patient_id']  = $data['patient_id'] ?? $v->patient_id;
+                $data['soignant_id'] = $v->medecin_id;
+            }
+        }
+
+        // Sécurité : si après merge on n’a toujours pas de soignant
+        if (empty($data['soignant_id']) && empty($kinesitherapie->soignant_id)) {
+            return response()->json([
+                'message' => "Impossible de mettre à jour : aucun médecin n'est associé à la visite."
+            ], 422);
+        }
+
         $kinesitherapie->fill($data)->save();
-        $kinesitherapie->load(['patient','visite','soignant:id,name,email']);
+        $kinesitherapie->load(['patient','visite','soignant.user']);
 
         return new KinesitherapieResource($kinesitherapie);
     }
@@ -131,7 +173,7 @@ class KinesitherapieController extends Controller
         $perPage = min(max((int)$request->query('limit', 20), 1), 200);
 
         $items = Kinesitherapie::onlyTrashed()
-            ->with(['patient','visite','soignant:id,name,email'])
+            ->with(['patient','visite','soignant.user'])
             ->orderByDesc('deleted_at')
             ->paginate($perPage);
 
@@ -149,7 +191,7 @@ class KinesitherapieController extends Controller
         $item = Kinesitherapie::onlyTrashed()->findOrFail($id);
         $item->restore();
 
-        $item->load(['patient','visite','soignant:id,name,email']);
+        $item->load(['patient','visite','soignant.user']);
 
         return (new KinesitherapieResource($item))
             ->additional(['restored' => true]);

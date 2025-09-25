@@ -12,22 +12,29 @@ use Illuminate\Http\Request;
 
 class SanitaireController extends Controller
 {
-    // GET /api/v1/sanitaire
-    // Filtres: ?patient_id=…&statut=…&type_action=…&q=…&sort=-date_acte&limit=20
-    // Corbeille: ?only_trashed=1 | ?with_trashed=1
+    /**
+     * GET /api/v1/sanitaires
+     * Filtres: ?patient_id=…&statut=…&q=…&type_action=…&sort=-date_acte&limit=20
+     * Corbeille: ?only_trashed=1 | ?with_trashed=1
+     */
     public function index(Request $request)
     {
-        $patientId   = (string) $request->query('patient_id', '');
-        $statut      = (string) $request->query('statut', '');
-        $typeAction  = (string) $request->query('type_action', '');
-        $q           = (string) $request->query('q', '');
-        $sortRaw     = (string) $request->query('sort', '-date_acte');
+        $u = $request->user();
+        if (!$u || (!$u->tokenCan('*') && !$u->tokenCan('sanitaire.view'))) {
+            return response()->json(['message' => 'Forbidden: sanitaire.view requis'], 403);
+        }
+
+        $patientId   = (string) $request->query('patient_id','');
+        $statut      = (string) $request->query('statut','');
+        $q           = (string) $request->query('q','');
+        $typeAction  = (string) $request->query('type_action','');
+        $sortRaw     = (string) $request->query('sort','-date_acte');
         $onlyTrashed = $request->boolean('only_trashed', false);
         $withTrashed = $request->boolean('with_trashed', false);
 
         $field = ltrim($sortRaw, '-');
         $dir   = str_starts_with($sortRaw, '-') ? 'desc' : 'asc';
-        if (!in_array($field, ['date_acte','created_at','statut','type_action'], true)) {
+        if (!in_array($field, ['date_acte','created_at','type_action','statut'], true)) {
             $field = 'date_acte';
         }
 
@@ -52,31 +59,43 @@ class SanitaireController extends Controller
         $items   = $query->paginate($perPage);
 
         return SanitaireResource::collection($items)->additional([
-            'page'  => $items->currentPage(),
-            'limit' => $items->perPage(),
-            'total' => $items->total(),
+            'page'         => $items->currentPage(),
+            'limit'        => $items->perPage(),
+            'total'        => $items->total(),
             'only_trashed' => $onlyTrashed,
             'with_trashed' => $withTrashed,
         ]);
     }
 
-    // POST /api/v1/sanitaire
+    /**
+     * POST /api/v1/sanitaires
+     * Règle: si visite présente/déduite → soignant_id = visite.medecin_id
+     */
     public function store(SanitaireStoreRequest $request)
     {
-        $data = $request->validated();
-
-        // soignant = user connecté
-        if ($request->user()) {
-            $data['soignant_id'] = $request->user()->id;
+        $u = $request->user();
+        if (!$u || (!$u->tokenCan('*') && !$u->tokenCan('sanitaire.create'))) {
+            return response()->json(['message' => 'Forbidden: sanitaire.create requis'], 403);
         }
 
-        // si visite absente mais patient fourni, déduire la dernière visite
+        $data = $request->validated();
+
+        // Déduire la visite si absente
         if (empty($data['visite_id']) && !empty($data['patient_id'])) {
             $data['visite_id'] = Visite::where('patient_id', $data['patient_id'])
                 ->orderByDesc('heure_arrivee')
                 ->value('id');
         }
 
+        // Verrouiller le soignant = médecin de la visite si on a une visite
+        if (!empty($data['visite_id'])) {
+            if ($v = Visite::find($data['visite_id'])) {
+                $data['patient_id']  = $data['patient_id'] ?? $v->patient_id;
+                $data['soignant_id'] = $v->medecin_id; // source de vérité
+            }
+        }
+
+        // Valeurs par défaut
         $data['date_acte'] = $data['date_acte'] ?? now();
         $data['statut']    = $data['statut'] ?? 'planifie';
 
@@ -87,45 +106,76 @@ class SanitaireController extends Controller
         ))->response()->setStatusCode(201);
     }
 
-    // GET /api/v1/sanitaire/{sanitaire}
-    public function show(Sanitaire $sanitaire)
+    /**
+     * GET /api/v1/sanitaires/{sanitaire}
+     */
+    public function show(Request $request, Sanitaire $sanitaire)
     {
-        $sanitaire->load(['patient','visite','soignant:id,name,email']);
-        return new SanitaireResource($sanitaire);
+        $u = $request->user();
+        if (!$u || (!$u->tokenCan('*') && !$u->tokenCan('sanitaire.view'))) {
+            return response()->json(['message' => 'Forbidden: sanitaire.view requis'], 403);
+        }
+
+        return new SanitaireResource($sanitaire->load(['patient','visite','soignant:id,name,email']));
     }
 
-    // PATCH/PUT /api/v1/sanitaire/{sanitaire}
+    /**
+     * PATCH /api/v1/sanitaires/{sanitaire}
+     */
     public function update(SanitaireUpdateRequest $request, Sanitaire $sanitaire)
     {
+        $u = $request->user();
+        if (!$u || (!$u->tokenCan('*') && !$u->tokenCan('sanitaire.update'))) {
+            return response()->json(['message' => 'Forbidden: sanitaire.update requis'], 403);
+        }
+
         $data = $request->validated();
 
-        if ((!array_key_exists('visite_id',$data) || empty($data['visite_id'])) && ($data['patient_id'] ?? $sanitaire->patient_id)) {
+        // Si visite absente, tenter de (re)déduire depuis le patient
+        if ((!array_key_exists('visite_id', $data) || empty($data['visite_id'])) && ($data['patient_id'] ?? $sanitaire->patient_id)) {
             $pid = $data['patient_id'] ?? $sanitaire->patient_id;
             $deduced = Visite::where('patient_id', $pid)->orderByDesc('heure_arrivee')->value('id');
             if ($deduced) $data['visite_id'] = $deduced;
         }
 
+        // Recalage du soignant si la visite est (ré)renseignée
+        if (!empty($data['visite_id'])) {
+            if ($v = Visite::find($data['visite_id'])) {
+                $data['soignant_id'] = $v->medecin_id;
+                $data['patient_id']  = $data['patient_id'] ?? $v->patient_id;
+            }
+        }
+
         $sanitaire->fill($data)->save();
-        $sanitaire->load(['patient','visite','soignant:id,name,email']);
 
-        return new SanitaireResource($sanitaire);
+        return new SanitaireResource($sanitaire->load(['patient','visite','soignant:id,name,email']));
     }
 
-    // DELETE /api/v1/sanitaire/{sanitaire} -> corbeille (soft delete)
-    public function destroy(Sanitaire $sanitaire)
+    /**
+     * DELETE /api/v1/sanitaires/{sanitaire}
+     * → corbeille
+     */
+    public function destroy(Request $request, Sanitaire $sanitaire)
     {
-        $sanitaire->delete();
+        $u = $request->user();
+        if (!$u || (!$u->tokenCan('*') && !$u->tokenCan('sanitaire.delete'))) {
+            return response()->json(['message' => 'Forbidden: sanitaire.delete requis'], 403);
+        }
 
-        return response()->json([
-            'message' => 'Acte sanitaire envoyé à la corbeille.',
-            'deleted' => true,
-            'id'      => $sanitaire->id,
-        ], 200);
+        $sanitaire->delete();
+        return response()->noContent();
     }
 
-    // GET /api/v1/sanitaire-corbeille -> liste corbeille
+    /**
+     * GET /api/v1/sanitaires-corbeille
+     */
     public function trash(Request $request)
     {
+        $u = $request->user();
+        if (!$u || (!$u->tokenCan('*') && !$u->tokenCan('sanitaire.view'))) {
+            return response()->json(['message' => 'Forbidden: sanitaire.view requis'], 403);
+        }
+
         $perPage = min(max((int)$request->query('limit', 20), 1), 200);
 
         $items = Sanitaire::onlyTrashed()
@@ -141,21 +191,33 @@ class SanitaireController extends Controller
         ]);
     }
 
-    // POST /api/v1/sanitaire/{id}/restore -> restaure depuis corbeille
-    public function restore(string $id)
+    /**
+     * POST /api/v1/sanitaires/{id}/restore
+     */
+    public function restore(Request $request, string $id)
     {
+        $u = $request->user();
+        if (!$u || (!$u->tokenCan('*') && !$u->tokenCan('sanitaire.update'))) {
+            return response()->json(['message' => 'Forbidden: sanitaire.update requis'], 403);
+        }
+
         $item = Sanitaire::onlyTrashed()->findOrFail($id);
         $item->restore();
 
-        $item->load(['patient','visite','soignant:id,name,email']);
-
-        return (new SanitaireResource($item))
+        return (new SanitaireResource($item->load(['patient','visite','soignant:id,name,email'])))
             ->additional(['restored' => true]);
     }
 
-    // DELETE /api/v1/sanitaire/{id}/force -> suppression définitive
-    public function forceDestroy(string $id)
+    /**
+     * DELETE /api/v1/sanitaires/{id}/force
+     */
+    public function forceDestroy(Request $request, string $id)
     {
+        $u = $request->user();
+        if (!$u || (!$u->tokenCan('*') && !$u->tokenCan('sanitaire.delete'))) {
+            return response()->json(['message' => 'Forbidden: sanitaire.delete requis'], 403);
+        }
+
         $item = Sanitaire::onlyTrashed()->findOrFail($id);
         $item->forceDelete();
 

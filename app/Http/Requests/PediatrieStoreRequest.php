@@ -6,13 +6,19 @@ use Illuminate\Foundation\Http\FormRequest;
 
 class PediatrieStoreRequest extends FormRequest
 {
-    public function authorize(): bool { return true; }
+    public function authorize(): bool
+    {
+        return true;
+    }
 
     public function rules(): array
     {
         return [
             'patient_id'             => ['required','uuid','exists:patients,id'],
             'visite_id'              => ['nullable','uuid','exists:visites,id'],
+
+            // ⚠️ soignant_id jamais fourni par le client (lié à visite.medecin_id)
+            'soignant_id'            => ['prohibited'],
 
             'date_acte'              => ['nullable','date'],
             'motif'                  => ['required','string','max:190'],
@@ -31,6 +37,29 @@ class PediatrieStoreRequest extends FormRequest
             'observation'            => ['nullable','string','max:1000'],
 
             'statut'                 => ['nullable','in:en_cours,clos,annule'],
+        ];
+    }
+
+    public function attributes(): array
+    {
+        return [
+            'patient_id'             => 'patient',
+            'visite_id'              => 'visite',
+            'soignant_id'            => 'soignant (automatique, ne pas envoyer)',
+            'date_acte'              => 'date de l’acte',
+            'motif'                  => 'motif',
+            'diagnostic'             => 'diagnostic',
+            'poids'                  => 'poids',
+            'taille'                 => 'taille',
+            'temperature'            => 'température',
+            'perimetre_cranien'      => 'périmètre crânien',
+            'saturation'             => 'saturation',
+            'frequence_cardiaque'    => 'fréquence cardiaque',
+            'frequence_respiratoire' => 'fréquence respiratoire',
+            'examen_clinique'        => 'examen clinique',
+            'traitements'            => 'traitements',
+            'observation'            => 'observation',
+            'statut'                 => 'statut',
         ];
     }
 }

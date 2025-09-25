@@ -5,6 +5,7 @@ namespace App\Http\Controllers\Api;
 use App\Http\Controllers\Controller;
 use App\Http\Requests\LaboratoireStoreRequest;
 use App\Http\Requests\LaboratoireUpdateRequest;
+
 use App\Http\Resources\LaboratoireResource;
 use App\Models\Laboratoire;
 use Illuminate\Http\Request;

@@ -11,23 +11,46 @@ class ConsultationStoreRequest extends FormRequest
     public function rules(): array
     {
         return [
-            'patient_id'        => ['required','uuid','exists:patients,id'],
-            'visite_id'         => ['nullable','uuid','exists:visites,id'],
+            // IDs en UUID (comme le reste de ton app)
+            'patient_id'         => ['required','uuid','exists:patients,id'],
+            'visite_id'          => ['nullable','uuid','exists:visites,id'],
 
-            'categorie'         => ['nullable','string','max:50'],
-            'type_consultation' => ['nullable','string','max:50'],
+            // Infos de typage
+            'categorie'          => ['nullable','string','max:50'],
+            'type_consultation'  => ['nullable','string','max:50'],
 
-            'date_acte'         => ['nullable','date'],
-            'motif'             => ['nullable','string','max:190'],
-            'examen_clinique'   => ['nullable','string'],
-            'diagnostic'        => ['nullable','string','max:190'],
-            'prescriptions'     => ['nullable','string'],
-            'orientation_service'=>['nullable','string'],
+            // Données cliniques
+            'date_acte'          => ['nullable','date'],
+            'motif'              => ['nullable','string','max:190'],
+            'examen_clinique'    => ['nullable','string'],
+            'diagnostic'         => ['nullable','string','max:190'],
+            'prescriptions'      => ['nullable','string'],
+            'orientation_service'=> ['nullable','string','max:150'],
 
-            'donnees_specifiques' => ['nullable','array'],
+            // Données spécifiques (JSON)
+            'donnees_specifiques'=> ['nullable','array'],
 
-            'statut'            => ['nullable','in:en_cours,clos,annule'],
-            'medecin_id'         => ['nullable','integer','exists:users,id'],
+            // Statut contrôlé
+            'statut'             => ['nullable','in:en_cours,clos,annule'],
+
+            // ⚠️ Le médecin est un Personnel (pas users)
+            'medecin_id'         => ['nullable','uuid','exists:personnels,id'],
+        ];
+    }
+
+    public function attributes(): array
+    {
+        return [
+            'patient_id'          => 'patient',
+            'visite_id'           => 'visite',
+            'date_acte'           => 'date de l’acte',
+            'type_consultation'   => 'type de consultation',
+            'examen_clinique'     => 'examen clinique',
+            'prescriptions'       => 'prescriptions',
+            'orientation_service' => 'orientation de service',
+            'donnees_specifiques' => 'données spécifiques',
+            'statut'              => 'statut',
+            'medecin_id'          => 'médecin',
         ];
     }
 }

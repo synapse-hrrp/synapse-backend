@@ -4,6 +4,9 @@ namespace App\Providers;
 
 use Illuminate\Support\ServiceProvider;
 use App\Models\Personnel;
+use App\Models\Visite;
+use App\Observers\VisiteObserver;
+use App\Observers\PersonnelObserver;
 
 class AppServiceProvider extends ServiceProvider
 {
@@ -20,8 +23,14 @@ class AppServiceProvider extends ServiceProvider
      */
     public function boot(): void
     {
-        if (class_exists(\App\Observers\PersonnelObserver::class)) {
-            Personnel::observe(\App\Observers\PersonnelObserver::class);
+        // Enregistre l'observer du modèle Personnel (si la classe existe)
+        if (class_exists(PersonnelObserver::class)) {
+            Personnel::observe(PersonnelObserver::class);
+        }
+
+        // Enregistre l'observer du modèle Visite (si la classe existe)
+        if (class_exists(VisiteObserver::class)) {
+            Visite::observe(VisiteObserver::class);
         }
     }
 }

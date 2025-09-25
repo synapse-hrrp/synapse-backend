@@ -8,6 +8,7 @@ use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Hash;
 use Illuminate\Support\Facades\Log;
 use Illuminate\Support\Facades\Schema;
+use Illuminate\Support\Str;
 
 class AuthController extends Controller
 {
@@ -44,20 +45,33 @@ class AuthController extends Controller
             return response()->json(['message' => 'Compte inactif.'], 403);
         }
 
-        // Abilities : si Spatie est présent on utilise ses permissions, sinon wildcard
-        $abilities = method_exists($user, 'getAllPermissions')
-            ? $user->getAllPermissions()->pluck('name')->all()
-            : ['*'];
+        // ✅ Admin/DG = wildcard, sinon on mappe les permissions Spatie → abilities Sanctum (+ alias)
+        $isAdmin = method_exists($user, 'hasAnyRole') ? $user->hasAnyRole(['admin','dg']) : false;
+
+        if ($isAdmin) {
+            $abilities = ['*'];
+        } else {
+            $abilities = method_exists($user, 'getAllPermissions')
+                ? $user->getAllPermissions()
+                    ->pluck('name')
+                    ->map(fn($n) => Str::of($n)->lower()->value())
+                    ->values()
+                    ->all()
+                : ['*']; // fallback si Spatie absent
+
+            $abilities = $this->expandAbilities($abilities);
+        }
+
+        // (optionnel mais recommandé) révoquer anciens tokens de ce device/user
+        try { $user->tokens()->delete(); } catch (\Throwable $e) {}
 
         $device    = $data['device_name'] ?? 'api';
         $expiresAt = now()->addHours(2);
-
-        // Sanctum: createToken(name, abilities = ['*'], expiresAt = null)
         $newToken  = $user->createToken($device, $abilities, $expiresAt);
 
-        // Optionnel recommandé : stocker IP / User-Agent du token si colonnes présentes
+        // Renseigne IP/UA si colonnes présentes
         try {
-            $accessTokenModel = $newToken->accessToken; // \Laravel\Sanctum\PersonalAccessToken
+            $accessTokenModel = $newToken->accessToken;
             if ($accessTokenModel) {
                 if (Schema::hasColumn('personal_access_tokens', 'ip_address')) {
                     $accessTokenModel->ip_address = $request->ip();
@@ -67,9 +81,7 @@ class AuthController extends Controller
                 }
                 $accessTokenModel->save();
             }
-        } catch (\Throwable $e) {
-            // non bloquant
-        }
+        } catch (\Throwable $e) {}
 
         // Bonus : dernière connexion
         $user->forceFill([
@@ -128,14 +140,26 @@ class AuthController extends Controller
         // Révoquer le token courant
         $user->currentAccessToken()?->delete();
 
-        $abilities = method_exists($user, 'getAllPermissions')
-            ? $user->getAllPermissions()->pluck('name')->all()
-            : ['*'];
+        $isAdmin = method_exists($user, 'hasAnyRole') ? $user->hasAnyRole(['admin','dg']) : false;
+
+        if ($isAdmin) {
+            $abilities = ['*'];
+        } else {
+            $abilities = method_exists($user, 'getAllPermissions')
+                ? $user->getAllPermissions()
+                    ->pluck('name')
+                    ->map(fn($n) => Str::of($n)->lower()->value())
+                    ->values()
+                    ->all()
+                : ['*'];
+
+            $abilities = $this->expandAbilities($abilities);
+        }
 
         $expiresAt = now()->addHours(2);
         $newToken  = $user->createToken('api', $abilities, $expiresAt);
 
-        // Remplir IP/UA si colonnes présentes
+        // IP/UA si colonnes
         try {
             $accessTokenModel = $newToken->accessToken;
             if ($accessTokenModel) {
@@ -147,9 +171,7 @@ class AuthController extends Controller
                 }
                 $accessTokenModel->save();
             }
-        } catch (\Throwable $e) {
-            // non bloquant
-        }
+        } catch (\Throwable $e) {}
 
         Log::channel('security')->info('token.refresh', [
             'user_id'    => $user->id,
@@ -181,5 +203,30 @@ class AuthController extends Controller
         ]);
 
         return response()->json(['message' => 'Déconnecté.'], 200);
+    }
+
+    /**
+     * Ajoute des alias d’abilities pour éviter les 403 "read vs view", "write vs update"
+     */
+    protected function expandAbilities(array $abilities): array
+    {
+        $set = collect($abilities)->map(fn($a) => Str::of($a)->lower()->value());
+
+        // patients
+        if ($set->contains('patients.view'))   $set->push('patients.read');
+        if ($set->contains('patients.read'))   $set->push('patients.view');
+        if ($set->contains('patients.update')) $set->push('patients.write');
+        if ($set->contains('patients.write'))  $set->push('patients.update');
+        if ($set->contains('patients.delete')) $set->push('patients.destroy'); // au cas où
+
+        // visites
+        if ($set->contains('visites.view'))    $set->push('visites.read');
+        if ($set->contains('visites.read'))    $set->push('visites.view');
+        if ($set->contains('visites.update'))  $set->push('visites.write');
+        if ($set->contains('visites.write'))   $set->push('visites.update');
+
+        // ajoute ici d’autres modules si besoin (labo, finance, etc.)
+
+        return $set->unique()->values()->all();
     }
 }

@@ -13,8 +13,6 @@ use Illuminate\Http\Request;
 class AruController extends Controller
 {
     // GET /api/v1/aru
-    // Filtres: ?patient_id=…&statut=…&q=…&sort=-date_acte&limit=20
-    // Corbeille: ?only_trashed=1 | ?with_trashed=1
     public function index(Request $request)
     {
         $patientId   = (string) $request->query('patient_id', '');
@@ -33,7 +31,12 @@ class AruController extends Controller
         $query = Aru::query()
             ->when($onlyTrashed, fn($q) => $q->onlyTrashed())
             ->when(!$onlyTrashed && $withTrashed, fn($q) => $q->withTrashed())
-            ->with(['patient','visite','soignant:id,name,email'])
+            // soignant = Personnel, pas User
+            ->with([
+                'patient',
+                'visite',
+                'soignant:id,first_name,last_name,job_title,service_id'
+            ])
             ->when($patientId !== '', fn($q2) => $q2->where('patient_id', $patientId))
             ->when($statut !== '', fn($q2) => $q2->where('statut', $statut))
             ->when($q !== '', function ($q2) use ($q) {
@@ -63,32 +66,55 @@ class AruController extends Controller
     {
         $data = $request->validated();
 
-        // soignant = user connecté
-        if ($request->user()) {
-            $data['soignant_id'] = $request->user()->id;
-        }
+        // ❌ ne jamais accepter soignant_id depuis le client
+        unset($data['soignant_id']);
 
-        // déduire la visite si absente
-        if (empty($data['visite_id'])) {
+        // Déduire visite si absente
+        if (empty($data['visite_id']) && !empty($data['patient_id'])) {
             $data['visite_id'] = Visite::where('patient_id', $data['patient_id'])
                 ->orderByDesc('heure_arrivee')
                 ->value('id');
         }
 
+        // Imposer les valeurs cohérentes depuis la visite
+        if (!empty($data['visite_id'])) {
+            if ($v = Visite::find($data['visite_id'])) {
+                $data['patient_id']  = $data['patient_id']  ?? $v->patient_id;
+                $data['service_id']  = $data['service_id']  ?? $v->service_id;
+                $data['soignant_id'] = $v->medecin_id; // médecin = Personnel
+            }
+        }
+
+        if (empty($data['soignant_id'])) {
+            return response()->json([
+                'message' => "Impossible de créer l'ARU : aucun médecin (Personnel) n'est associé à la visite."
+            ], 422);
+        }
+
         $data['date_acte'] = $data['date_acte'] ?? now();
         $data['statut']    = $data['statut'] ?? 'en_cours';
 
-        $item = Aru::create($data);
+        // Idempotence : si déjà créé par l'Observer Visite, on met à jour
+        $item = null;
+        if (!empty($data['visite_id'])) {
+            $item = Aru::where('visite_id', $data['visite_id'])->first();
+        }
+
+        if ($item) {
+            $item->fill($data)->save();
+        } else {
+            $item = Aru::create($data);
+        }
 
         return (new AruResource(
-            $item->load(['patient','visite','soignant:id,name,email'])
+            $item->load(['patient','visite','soignant:id,first_name,last_name,job_title,service_id'])
         ))->response()->setStatusCode(201);
     }
 
     // GET /api/v1/aru/{aru}
     public function show(Aru $aru)
     {
-        $aru->load(['patient','visite','soignant:id,name,email']);
+        $aru->load(['patient','visite','soignant:id,first_name,last_name,job_title,service_id']);
         return new AruResource($aru);
     }
 
@@ -97,19 +123,37 @@ class AruController extends Controller
     {
         $data = $request->validated();
 
+        // ❌ ne jamais accepter soignant_id depuis le client
+        unset($data['soignant_id']);
+
+        // Déduire visite la plus récente si besoin
         if ((!array_key_exists('visite_id',$data) || empty($data['visite_id'])) && ($data['patient_id'] ?? $aru->patient_id)) {
             $pid = $data['patient_id'] ?? $aru->patient_id;
             $deduced = Visite::where('patient_id', $pid)->orderByDesc('heure_arrivee')->value('id');
             if ($deduced) $data['visite_id'] = $deduced;
         }
 
+        // Verrouiller soignant = médecin de la visite
+        if (!empty($data['visite_id'])) {
+            if ($v = Visite::find($data['visite_id'])) {
+                $data['soignant_id'] = $v->medecin_id;
+                $data['patient_id']  = $data['patient_id'] ?? $v->patient_id;
+                $data['service_id']  = $data['service_id'] ?? $v->service_id;
+            }
+        }
+
+        if (empty($data['soignant_id']) && empty($aru->soignant_id)) {
+            return response()->json([
+                'message' => "Impossible de mettre à jour l'ARU : aucun médecin (Personnel) n'est associé à la visite."
+            ], 422);
+        }
+
         $aru->fill($data)->save();
-        $aru->load(['patient','visite','soignant:id,name,email']);
+        $aru->load(['patient','visite','soignant:id,first_name,last_name,job_title,service_id']);
 
         return new AruResource($aru);
     }
 
-    // DELETE /api/v1/aru/{aru} -> corbeille
     public function destroy(Aru $aru)
     {
         $aru->delete();
@@ -121,13 +165,12 @@ class AruController extends Controller
         ], 200);
     }
 
-    // GET /api/v1/aru-corbeille -> liste corbeille
     public function trash(Request $request)
     {
         $perPage = min(max((int)$request->query('limit', 20), 1), 200);
 
         $items = Aru::onlyTrashed()
-            ->with(['patient','visite','soignant:id,name,email'])
+            ->with(['patient','visite','soignant:id,first_name,last_name,job_title,service_id'])
             ->orderByDesc('deleted_at')
             ->paginate($perPage);
 
@@ -139,19 +182,17 @@ class AruController extends Controller
         ]);
     }
 
-    // POST /api/v1/aru/{id}/restore -> restaure
     public function restore(string $id)
     {
         $item = Aru::onlyTrashed()->findOrFail($id);
         $item->restore();
 
-        $item->load(['patient','visite','soignant:id,name,email']);
+        $item->load(['patient','visite','soignant:id,first_name,last_name,job_title,service_id']);
 
         return (new AruResource($item))
             ->additional(['restored' => true]);
     }
 
-    // DELETE /api/v1/aru/{id}/force -> suppression définitive
     public function forceDestroy(string $id)
     {
         $item = Aru::onlyTrashed()->findOrFail($id);

@@ -18,8 +18,6 @@ class Visite extends Model
         'heure_arrivee',
         'plaintes_motif','hypothese_diagnostic',
         'affectation_id','statut','clos_at',
-
-        // Pricing minimal (aligné à la migration)
         'tarif_id','montant_prevu','montant_du','devise',
     ];
 
@@ -28,67 +26,87 @@ class Visite extends Model
         'clos_at'       => 'datetime',
         'montant_prevu' => 'decimal:2',
         'montant_du'    => 'decimal:2',
-        // si tu as un enum PHP 8.1, tu peux caster ici: 'statut' => \App\Enums\VisiteStatut::class,
     ];
 
-    // Attributs calculés renvoyés dans toArray()/JSON
     protected $appends = ['est_soldee'];
 
-    protected static function booted(): void
+   protected static function booted(): void
     {
-        static::creating(function (self $v) {
-            if (! $v->id) $v->id = (string) Str::uuid();
-            if (! $v->heure_arrivee) $v->heure_arrivee = now();
+        // Petite fonction interne qu’on réutilise pour "remplir" la tarification
+        $fillPricing = function (self $v) {
+            $isEmpty = static fn($x) => $x === null || $x === '' || (is_numeric($x) && (float)$x == 0.0);
 
-            // --- Tarification automatique ---
-            // Si pas de tarif explicitement fourni, on prend celui du service (si défini comme tarif courant)
-            if (! $v->tarif_id && $v->service_id && $v->service?->tarif) {
-                $v->tarif_id = $v->service->tarif->id;
+            // 1) Résoudre le tarif automatiquement si pas fourni
+            if (! $v->tarif_id && $v->service_id) {
+                // Essayer via la relation "tarif" du service (actif le + récent)
+                $service = $v->relationLoaded('service') ? $v->service : $v->service()->first();
+                $tarifId = null;
+
+                if ($service && $service->tarif) {
+                    $tarifId = $service->tarif->id;
+                } else {
+                    // Fallback: chercher par service_slug
+                    $slug = $service?->slug ?? \App\Models\Service::whereKey($v->service_id)->value('slug');
+                    if ($slug) {
+                        $tarifId = \App\Models\Tarif::where('service_slug', $slug)
+                            ->where('is_active', true)
+                            ->orderByDesc('created_at')  // ou ->orderByDesc('id') si pas de timestamps
+                            ->value('id');
+                    }
+                }
+
+                if ($tarifId) {
+                    $v->tarif_id = $tarifId;
+                }
             }
 
-            // Si on a un tarif, remplir montant/devise par défaut
-            if ($v->tarif_id && is_null($v->montant_prevu)) {
-                $v->montant_prevu = $v->tarif->prix;              // colonne 'prix' dans tarifs
-                $v->devise        = $v->tarif->devise ?? 'CDF';   // par défaut CDF
+            // 2) Si on a un tarif et que le montant n'a pas été renseigné ou vaut 0/"" → remplir depuis le tarif
+            if ($v->tarif_id && $isEmpty($v->montant_prevu)) {
+                // Lire directement en DB pour éviter un 2e chargement du modèle
+                $v->montant_prevu = (string) $v->tarif()->value('montant'); // string "1234.00"
+                $v->devise        = $v->tarif()->value('devise') ?? 'XAF';
             }
 
-            // Montant dû = prévu au départ (sera ajusté par la caisse/paiements)
-            if (is_null($v->montant_du)) {
+            // 3) Montant dû = prévu si vide/0
+            if ($isEmpty($v->montant_du)) {
                 $v->montant_du = $v->montant_prevu ?? 0;
             }
 
-            // Statut par défaut
-            $v->statut ??= 'EN_ATTENTE'; // ou \App\Enums\VisiteStatut::EN_ATTENTE->value
+            // 4) Defaults divers
+            if (! $v->heure_arrivee) $v->heure_arrivee = now();
+            $v->statut ??= 'EN_ATTENTE';
+        };
+
+        static::creating(function (self $v) use ($fillPricing) {
+            if (! $v->id) $v->id = (string) \Illuminate\Support\Str::uuid();
+            $fillPricing($v);
+        });
+
+        // Optionnel mais pratique : si on change service/tarif à l’update, recalcule au besoin
+        static::updating(function (self $v) use ($fillPricing) {
+            if ($v->isDirty(['service_id','tarif_id','montant_prevu','montant_du','devise'])) {
+                $fillPricing($v);
+            }
         });
     }
+ 
 
     // ----------------
     // Relations
     // ----------------
     public function patient() { return $this->belongsTo(Patient::class); }
-    public function service() { return $this->belongsTo(Service::class); }
+    public function service() { return $this->belongsTo(Service::class); } // reste sur service_id
     public function medecin() { return $this->belongsTo(User::class, 'medecin_id'); }
     public function agent()   { return $this->belongsTo(User::class, 'agent_id'); }
     public function tarif()   { return $this->belongsTo(Tarif::class); }
-    public function facture() { return $this->hasOne(Facture::class); } // important pour le lien caisse
+    public function facture() { return $this->hasOne(Facture::class); }
 
     // ----------------
     // Helpers métier
     // ----------------
-    public function envoyerEnCaisse(): void
-    {
-        $this->update(['statut' => 'A_ENCAISSER']);
-    }
-
-    public function marquerPayee(): void
-    {
-        $this->update(['statut' => 'PAYEE']);
-    }
-
-    public function clore(): void
-    {
-        $this->update(['statut' => 'CLOTUREE', 'clos_at' => now()]);
-    }
+    public function envoyerEnCaisse(): void { $this->update(['statut' => 'A_ENCAISSER']); }
+    public function marquerPayee(): void    { $this->update(['statut' => 'PAYEE']); }
+    public function clore(): void           { $this->update(['statut' => 'CLOTUREE', 'clos_at' => now()]); }
 
     // ----------------
     // Scopes utiles
@@ -102,5 +120,12 @@ class Visite extends Model
     public function getEstSoldeeAttribute(): bool
     {
         return (float) $this->montant_du <= 0.0;
+        }
+
+    // À AJOUTER dans la classe Visite (avec les autres relations)
+    public function aru()
+    {
+        return $this->hasOne(\App\Models\Aru::class, 'visite_id');
     }
+
 }

@@ -9,6 +9,7 @@ use App\Http\Resources\PansementResource;
 use App\Models\Pansement;
 use App\Models\Visite;
 use Illuminate\Http\Request;
+use Illuminate\Support\Facades\Schema;
 
 class PansementController extends Controller
 {
@@ -33,7 +34,9 @@ class PansementController extends Controller
             ->with([
                 'patient',
                 'visite',
-                'soignant:id,name,email', // on limite les colonnes
+                // soignant = personnels
+                'soignant:id,first_name,last_name,job_title,service_id',
+                // 'service' // décommente si tu as ajouté la relation + colonne
             ])
             ->when($patientId !== '', fn ($q2) => $q2->where('patient_id', $patientId))
             ->when($status !== '', fn ($q2) => $q2->where('status', $status))
@@ -59,33 +62,54 @@ class PansementController extends Controller
 
     /**
      * POST /api/v1/pansements
-     * Crée un pansement. soignant_id = user connecté. visite_id déduite si absente.
+     * soignant_id/service_id sont déduits de la visite (jamais depuis le client ni l'utilisateur connecté)
      */
     public function store(PansementStoreRequest $request)
     {
         $data = $request->validated();
-        $user = $request->user();
 
-        // soignant = utilisateur connecté
-        if ($user) {
-            $data['soignant_id'] = $user->id;
-        }
-
-        // si la visite n'est pas envoyée, on prend la dernière visite du patient (si elle existe)
+        // 1) Déduire la visite si absente (dernière visite du patient)
         if (empty($data['visite_id']) && !empty($data['patient_id'])) {
             $data['visite_id'] = Visite::where('patient_id', $data['patient_id'])
                 ->orderByDesc('heure_arrivee')
                 ->value('id');
         }
 
-        // valeurs par défaut (en plus du boot() du modèle)
+        // 2) Si on a une visite, verrouiller les champs depuis la visite
+        if (!empty($data['visite_id'])) {
+            if ($v = Visite::query()->select(['id','patient_id','service_id','medecin_id'])->find($data['visite_id'])) {
+                // patient/service prennent la valeur de la visite si manquants
+                $data['patient_id']  = $data['patient_id']  ?? $v->patient_id;
+                if (Schema::hasColumn('pansements','service_id')) {
+                    $data['service_id']  = $data['service_id']  ?? $v->service_id;
+                }
+                // soignant = medecin_id (Personnel) de la visite (obligatoire pour créer)
+                $data['soignant_id'] = $v->medecin_id;
+            }
+        }
+
+        // 3) Sécurité : soignant_id doit être présent (FK personnels)
+        if (empty($data['soignant_id'])) {
+            return response()->json([
+                'message' => "Impossible de créer le pansement : aucun médecin (Personnel) n'est associé à la visite."
+            ], 422);
+        }
+
+        // 4) Défauts
         $data['date_soin'] = $data['date_soin'] ?? now();
         $data['status']    = $data['status']    ?? 'en_cours';
 
+        // 5) Création
         $item = Pansement::create($data);
 
+        // 6) Retour
         return (new PansementResource(
-            $item->load(['patient', 'visite', 'soignant:id,name,email'])
+            $item->load([
+                'patient',
+                'visite',
+                'soignant:id,first_name,last_name,job_title,service_id',
+                // 'service'
+            ])
         ))->response()->setStatusCode(201);
     }
 
@@ -94,18 +118,24 @@ class PansementController extends Controller
      */
     public function show(Pansement $pansement)
     {
-        $pansement->load(['patient', 'visite', 'soignant:id,name,email']);
+        $pansement->load([
+            'patient',
+            'visite',
+            'soignant:id,first_name,last_name,job_title,service_id',
+            // 'service'
+        ]);
         return new PansementResource($pansement);
     }
 
     /**
      * PATCH/PUT /api/v1/pansements/{pansement}
+     * Recalque soignant/service/patient si visite_id change
      */
     public function update(PansementUpdateRequest $request, Pansement $pansement)
     {
         $data = $request->validated();
 
-        // si la visite n’est pas fournie, on essaie de (re)déduire depuis le patient lié
+        // Si visite_id est fourni OU si on doit le déduire via patient
         if ((!array_key_exists('visite_id', $data) || empty($data['visite_id'])) && ($data['patient_id'] ?? $pansement->patient_id)) {
             $pid = $data['patient_id'] ?? $pansement->patient_id;
             $deducedVisite = Visite::where('patient_id', $pid)
@@ -116,9 +146,32 @@ class PansementController extends Controller
             }
         }
 
+        // Si on a une visite (nouvelle ou existante), resynchroniser les champs “verrouillés”
+        if (!empty($data['visite_id'])) {
+            if ($v = Visite::query()->select(['id','patient_id','service_id','medecin_id'])->find($data['visite_id'])) {
+                $data['patient_id']  = $data['patient_id'] ?? $v->patient_id;
+                if (Schema::hasColumn('pansements','service_id')) {
+                    $data['service_id']  = $data['service_id'] ?? $v->service_id;
+                }
+                $data['soignant_id'] = $v->medecin_id; // re-lock
+            }
+        }
+
+        // Empêche toute update si on n’a toujours pas de soignant
+        if (empty($data['soignant_id']) && empty($pansement->soignant_id)) {
+            return response()->json([
+                'message' => "Impossible de mettre à jour le pansement : aucun médecin (Personnel) n'est associé à la visite."
+            ], 422);
+        }
+
         $pansement->fill($data)->save();
 
-        $pansement->load(['patient', 'visite', 'soignant:id,name,email']);
+        $pansement->load([
+            'patient',
+            'visite',
+            'soignant:id,first_name,last_name,job_title,service_id',
+            // 'service'
+        ]);
         return new PansementResource($pansement);
     }
 

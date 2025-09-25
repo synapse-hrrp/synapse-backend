@@ -14,8 +14,6 @@ class GynecologieController extends Controller
 {
     /**
      * GET /api/v1/gynecologie
-     * Filtres: ?patient_id=…&statut=…&q=…&sort=-date_acte&limit=20
-     * Corbeille: ?only_trashed=1 (seulement corbeille) | ?with_trashed=1 (inclure corbeille)
      */
     public function index(Request $request)
     {
@@ -63,21 +61,36 @@ class GynecologieController extends Controller
 
     /**
      * POST /api/v1/gynecologie
+     * 🔒 soignant_id = medecin_id de la visite (jamais l’utilisateur connecté)
      */
     public function store(GynecologieStoreRequest $request)
     {
         $data = $request->validated();
 
-        // soignant = user connecté
-        if ($request->user()) {
-            $data['soignant_id'] = $request->user()->id;
-        }
-
-        // déduire la visite si absente
-        if (empty($data['visite_id'])) {
+        // Déduire la visite si absente (dernière visite du patient)
+        if (empty($data['visite_id']) && !empty($data['patient_id'])) {
             $data['visite_id'] = Visite::where('patient_id', $data['patient_id'])
                 ->orderByDesc('heure_arrivee')
                 ->value('id');
+        }
+
+        // Recaler depuis la visite
+        if (!empty($data['visite_id'])) {
+            if ($v = Visite::find($data['visite_id'])) {
+                $data['patient_id']  = $data['patient_id']  ?? $v->patient_id;
+                // si la colonne service_id existe sur gynecologies
+                if (\Illuminate\Support\Facades\Schema::hasColumn('gynecologies','service_id')) {
+                    $data['service_id'] = $data['service_id'] ?? $v->service_id;
+                }
+                $data['soignant_id'] = $v->medecin_id; // 👈 clé
+            }
+        }
+
+        // Sécurité: médecin obligatoire
+        if (empty($data['soignant_id'])) {
+            return response()->json([
+                'message' => "Impossible de créer l'acte de gynécologie : aucun médecin n'est associé à la visite."
+            ], 422);
         }
 
         $data['date_acte'] = $data['date_acte'] ?? now();
@@ -101,16 +114,35 @@ class GynecologieController extends Controller
 
     /**
      * PATCH/PUT /api/v1/gynecologie/{gynecologie}
+     * 🔒 soignant_id recalé depuis visite (si visite change)
      */
     public function update(GynecologieUpdateRequest $request, Gynecologie $gynecologie)
     {
         $data = $request->validated();
 
-        // si visite absente, tente de déduire depuis le patient
+        // Déduire visite si absente mais patient fourni/existant
         if ((!array_key_exists('visite_id',$data) || empty($data['visite_id'])) && ($data['patient_id'] ?? $gynecologie->patient_id)) {
             $pid = $data['patient_id'] ?? $gynecologie->patient_id;
             $deduced = Visite::where('patient_id', $pid)->orderByDesc('heure_arrivee')->value('id');
             if ($deduced) $data['visite_id'] = $deduced;
+        }
+
+        // Si une visite est (re)liée, recaler médecin/patient/service
+        if (!empty($data['visite_id'])) {
+            if ($v = Visite::find($data['visite_id'])) {
+                $data['soignant_id'] = $v->medecin_id; // 🔒
+                $data['patient_id']  = $data['patient_id'] ?? $v->patient_id;
+                if (\Illuminate\Support\Facades\Schema::hasColumn('gynecologies','service_id')) {
+                    $data['service_id']  = $data['service_id']  ?? $v->service_id;
+                }
+            }
+        }
+
+        // Sécurité: ne jamais laisser l’objet sans médecin
+        if (empty($data['soignant_id']) && empty($gynecologie->soignant_id)) {
+            return response()->json([
+                'message' => "Impossible de mettre à jour l'acte de gynécologie : aucun médecin n'est associé à la visite."
+            ], 422);
         }
 
         $gynecologie->fill($data)->save();
@@ -121,11 +153,10 @@ class GynecologieController extends Controller
 
     /**
      * DELETE /api/v1/gynecologie/{gynecologie}
-     * Envoie à la corbeille (soft delete) et renvoie un message.
      */
     public function destroy(Gynecologie $gynecologie)
     {
-        $gynecologie->delete(); // corbeille
+        $gynecologie->delete();
         return response()->json([
             'message' => 'Acte gynécologie envoyé à la corbeille.',
             'deleted' => true,
@@ -133,10 +164,6 @@ class GynecologieController extends Controller
         ], 200);
     }
 
-    /**
-     * GET /api/v1/gynecologie-corbeille
-     * Liste uniquement les éléments en corbeille.
-     */
     public function trash(Request $request)
     {
         $perPage = min(max((int)$request->query('limit', 20), 1), 200);
@@ -154,10 +181,6 @@ class GynecologieController extends Controller
         ]);
     }
 
-    /**
-     * POST /api/v1/gynecologie/{id}/restore
-     * Restaure un enregistrement soft-deleted.
-     */
     public function restore(string $id)
     {
         $item = Gynecologie::onlyTrashed()->findOrFail($id);
@@ -169,10 +192,6 @@ class GynecologieController extends Controller
             ->additional(['restored' => true]);
     }
 
-    /**
-     * DELETE /api/v1/gynecologie/{id}/force
-     * Suppression définitive depuis la corbeille.
-     */
     public function forceDestroy(string $id)
     {
         $item = Gynecologie::onlyTrashed()->findOrFail($id);

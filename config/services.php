@@ -35,4 +35,10 @@ return [
         ],
     ],
 
+    // 👉 Ajout de ta config HMAC
+    'core' => [
+        'secret' => null, // SECRET partagé avec l’orchestrateur
+        'accept_event_versions' => [1],      // versions acceptées
+    ],
+
 ];
