@@ -7,6 +7,7 @@ use App\Http\Controllers\Api\AuthController;
 use App\Http\Controllers\Api\Admin\UserManagementController;
 use App\Http\Controllers\Api\Admin\PersonnelController;
 use App\Http\Controllers\Api\ServiceController;
+use App\Http\Controllers\Api\LookupController;
 
 use App\Http\Controllers\Api\ConsultationController;
 use App\Http\Controllers\Api\PatientController;
@@ -43,9 +44,9 @@ Route::prefix('v1')->group(function () {
         Route::get('auth/me',      [AuthController::class, 'me']);
     });
 
-    // ── Admin (/api/v1/admin) ─────────────────────────────────────────────
-    Route::prefix('admin')
-        ->middleware(['auth:sanctum','throttle:auth','role:admin'])
+   // ── Admin (/api/v1/admin) ─────────────────────────────
+   Route::prefix('admin')
+    ->middleware(['auth:sanctum','throttle:auth','role:admin'])
         ->group(function () {
             // Users
             Route::apiResource('users', UserManagementController::class)
@@ -55,14 +56,35 @@ Route::prefix('v1')->group(function () {
             Route::apiResource('personnels', PersonnelController::class)
                 ->parameters(['personnels' => 'personnel']);
 
-            // 🔎 Personnel par user → /api/v1/admin/personnels/by-user/{user_id}
+            // Recherche par user_id
             Route::get('personnels/by-user/{user_id}', [PersonnelController::class, 'byUser'])
                 ->name('v1.personnels.by_user');
+
+            // ✅ Endpoints avatar dédiés (AJOUT)
+            Route::post('personnels/{personnel}/avatar',  [PersonnelController::class, 'uploadAvatar'])
+                ->name('v1.personnels.avatar.upload');
+            Route::delete('personnels/{personnel}/avatar',[\App\Http\Controllers\Api\Admin\PersonnelController::class, 'deleteAvatar'])
+                ->name('v1.personnels.avatar.delete');
         });
 
-    // ── Services (slug scopé) ───────────────────────────────────────────
-    Route::apiResource('services', ServiceController::class)
+    // ── Medecins Lookup (pas besoin de model Medecin) ────────────────────────
+    // GET /api/v1/lookups/medecins?q=...&per_page=20
+    Route::middleware(['auth:sanctum','throttle:auth','ability:consultations.view'])
+        ->get('lookups/medecins', [LookupController::class, 'medecins'])
+        ->name('v1.lookups.medecins');
+
+    // ── Services (slug scopé) ────────────────────────────────────────────────
+    Route::middleware(['auth:sanctum','throttle:auth'])
+        ->apiResource('services', ServiceController::class)
         ->scoped(['service' => 'slug']);
+
+    // Options pour un personnel donné (liste déroulante + sélection actuelle)
+    // GET /api/v1/services/options-for-personnel/{personnel}?active=1
+    Route::middleware(['auth:sanctum','throttle:auth'])
+        ->get('services/options-for-personnel/{personnel}', [ServiceController::class, 'optionsForPersonnel'])
+        ->whereNumber('personnel')
+        ->name('v1.services.options_for_personnel');
+
 
     // ── Patients (/api/v1/patients) ───────────────────────────────────────
     Route::middleware(['auth:sanctum','throttle:auth'])->group(function () {

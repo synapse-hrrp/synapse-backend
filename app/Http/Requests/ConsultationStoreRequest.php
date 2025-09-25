@@ -11,23 +11,23 @@ class ConsultationStoreRequest extends FormRequest
     public function rules(): array
     {
         return [
-            'patient_id'        => ['required','uuid','exists:patients,id'],
-            'visite_id'         => ['nullable','uuid','exists:visites,id'],
+            'patient_id'          => ['required','uuid','exists:patients,id'],
+            'visite_id'           => ['nullable','uuid','exists:visites,id'],
 
-            'categorie'         => ['nullable','string','max:50'],
-            'type_consultation' => ['nullable','string','max:50'],
+            'categorie'           => ['nullable','string','max:50'],
+            'type_consultation'   => ['nullable','string','max:50'],
 
-            'date_acte'         => ['nullable','date'],
-            'motif'             => ['nullable','string','max:190'],
-            'examen_clinique'   => ['nullable','string'],
-            'diagnostic'        => ['nullable','string','max:190'],
-            'prescriptions'     => ['nullable','string'],
-            'orientation_service'=>['nullable','string'],
+            'date_acte'           => ['nullable','date'],
+            'motif'               => ['nullable','string','max:190'],
+            'examen_clinique'     => ['nullable','string'],
+            'diagnostic'          => ['nullable','string','max:190'],
+            'prescriptions'       => ['nullable','string'],
+            'orientation_service' => ['nullable','string','max:190'],
 
             'donnees_specifiques' => ['nullable','array'],
 
-            'statut'            => ['nullable','in:en_cours,clos,annule'],
-            'medecin_id'         => ['nullable','integer','exists:users,id'],
+            'statut'              => ['nullable','in:en_cours,clos,annule'],
+            'medecin_id'          => ['nullable','exists:users,id'],
         ];
     }
 }
