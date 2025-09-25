@@ -4,10 +4,10 @@ namespace App\Http\Controllers\Api\Admin;
 
 use App\Http\Controllers\Controller;
 use App\Models\User;
-use App\Models\Personnel; // ✅ auto-création de la fiche RH
+use App\Models\Personnel;
 use Illuminate\Http\Request;
-use Illuminate\Validation\Rules\Password;
 use Illuminate\Support\Facades\Hash;
+use Illuminate\Validation\Rules\Password;
 
 class UserManagementController extends Controller
 {
@@ -24,7 +24,7 @@ class UserManagementController extends Controller
                 'personnel.service:id,name',
             ])
             ->select('id','name','email','phone','is_active','created_at')
-            ->when($request->search, fn($qq,$s) => $qq->search($s))
+            ->when($request->search, fn($qq, $s) => $qq->search($s))
             ->when($request->filled('role'), function ($qq) use ($request) {
                 $qq->whereHas('roles', fn($r) => $r->where('name', $request->string('role')));
             })
@@ -35,7 +35,7 @@ class UserManagementController extends Controller
         $page->through(function (User $u) {
             return [
                 'id'         => $u->id,
-                'name'       => $u->name,
+                'name'       => $u->name,   // alias affichage
                 'email'      => $u->email,
                 'phone'      => $u->phone,
                 'is_active'  => $u->is_active,
@@ -65,7 +65,7 @@ class UserManagementController extends Controller
     public function store(Request $request)
     {
         $data = $request->validate([
-            'name'                  => ['required','string','max:255'],
+            'name'                  => ['required','string','max:255'], // alias affichage
             'email'                 => ['required','email','max:255','unique:users,email'],
             'password'              => ['required', Password::min(8)],
             'password_confirmation' => ['required','same:password'],
@@ -73,11 +73,14 @@ class UserManagementController extends Controller
             'roles'                 => ['nullable','array'],
             'roles.*'               => ['string','exists:roles,name'],
 
-            // champs optionnels pour préremplir la fiche personnel
+            // Préremplissage optionnel de la fiche personnel
+            'first_name'            => ['sometimes','string','max:100'],
+            'last_name'             => ['sometimes','string','max:100'],
             'service_id'            => ['nullable','exists:services,id'],
             'matricule'             => ['nullable','string','max:50','unique:personnels,matricule'],
         ]);
 
+        // 1) Créer l'utilisateur
         $user = User::create([
             'name'      => $data['name'],
             'email'     => $data['email'],
@@ -86,29 +89,42 @@ class UserManagementController extends Controller
             'is_active' => true,
         ]);
 
+        // 2) Rôles
         if (!empty($data['roles'])) {
             $user->syncRoles($data['roles']);
         }
 
-        // ---------- auto-création Personnel ----------
-        [$first, $last] = (function (string $full) {
-            $parts = array_values(array_filter(preg_split('/\s+/', trim($full))));
-            $first = $parts[0] ?? 'Prénom';
-            $last  = count($parts) > 1 ? implode(' ', array_slice($parts, 1)) : 'Nom';
-            return [$first, $last];
-        })($data['name']);
+        // 3) Déterminer first/last non nuls pour Personnel
+        // a) si fournis
+        $first = isset($data['first_name']) ? trim((string)$data['first_name']) : '';
+        $last  = isset($data['last_name'])  ? trim((string)$data['last_name'])  : '';
 
+        // b) sinon, découper "name" de l'utilisateur
+        if ($first === '' && $last === '') {
+            $parts = array_values(array_filter(preg_split('/\s+/', trim($data['name']))));
+            if (count($parts) >= 2) {
+                $first = $parts[0];
+                $last  = implode(' ', array_slice($parts, 1));
+            }
+        }
+
+        // c) fallbacks durs pour éviter NULL si colonnes NOT NULL
+        if ($first === '') $first = 'Prénom';
+        if ($last  === '') $last  = 'Nom';
+
+        // 4) Auto-créer la fiche Personnel
         Personnel::firstOrCreate(
             ['user_id' => $user->id],
             [
                 'first_name' => $first,
                 'last_name'  => $last,
                 'service_id' => $request->integer('service_id') ?: null,
-                'matricule'  => $data['matricule'] ?? ('EMP-'.now()->format('Y').'-'.str_pad((string) $user->id, 4, '0', STR_PAD_LEFT)),
+                'matricule'  => $data['matricule']
+                    ?? ('EMP-'.now()->format('Y').'-'.str_pad((string) $user->id, 4, '0', STR_PAD_LEFT)),
             ]
         );
-        // ---------------------------------------------
 
+        // 5) Charger relations pour la réponse
         $user->load([
             'roles:id,name',
             'personnel:id,user_id,first_name,last_name,service_id,matricule,job_title',

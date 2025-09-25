@@ -27,6 +27,7 @@ return new class extends Migration {
             $table->string('city')->nullable();
             $table->string('country')->nullable();
             $table->string('job_title')->nullable();
+            $table->string('avatar_path')->nullable();
             $table->date('hired_at')->nullable();
 
             // rattachement à un service EXISTANT

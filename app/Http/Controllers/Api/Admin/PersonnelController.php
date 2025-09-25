@@ -5,28 +5,25 @@ namespace App\Http\Controllers\Api\Admin;
 use App\Http\Controllers\Controller;
 use App\Models\Personnel;
 use Illuminate\Http\Request;
+use Illuminate\Support\Facades\Storage;
 
 class PersonnelController extends Controller
 {
     /**
      * GET /api/v1/admin/personnels
-     * Liste paginée + filtres (user_id, service_id, recherche texte).
      */
     public function index(Request $request)
     {
-        $userId   = $request->query('user_id');            // ?user_id=3
-        $service  = $request->query('service_id');         // ?service_id=2
-        $q        = trim((string) $request->query('q', ''));// ?q=alice
-        $perPage  = (int) $request->query('per_page', 10);
-        $perPage  = max(1, min($perPage, 100));
+        $userId   = $request->query('user_id');
+        $service  = $request->query('service_id');
+        $q        = trim((string) $request->query('q', ''));
+        $perPage  = max(1, min((int) $request->query('per_page', 10), 100));
 
         $query = Personnel::query()->with(['user:id,name,email', 'service:id,name']);
 
-        // Filtres exacts
         if (!empty($userId))   $query->where('user_id', $userId);
         if (!empty($service))  $query->where('service_id', $service);
 
-        // Recherche texte (nom, prénom, matricule, cin, email user)
         if ($q !== '') {
             $like = '%' . preg_replace('/\s+/', '%', $q) . '%';
             $query->where(function ($sub) use ($like) {
@@ -41,14 +38,13 @@ class PersonnelController extends Controller
             });
         }
 
-        $items = $query->orderByDesc('created_at')->paginate($perPage);
-
-        return response()->json($items);
+        return response()->json(
+            $query->orderByDesc('created_at')->paginate($perPage)
+        );
     }
 
     /**
      * GET /api/v1/admin/personnels/by-user/{user_id}
-     * Retourne la fiche personnel liée à un user (relation 1–1).
      */
     public function byUser(int $user_id)
     {
@@ -79,23 +75,15 @@ class PersonnelController extends Controller
             'job_title'     => ['nullable','string','max:150'],
             'hired_at'      => ['nullable','date'],
             'service_id'    => ['nullable','exists:services,id'],
-
-            // rôles & permissions à appliquer au user lié
-            'roles'         => ['sometimes','array'],
-            'roles.*'       => ['string','exists:roles,name'],
-            'permissions'   => ['sometimes','array'],
-            'permissions.*' => ['string','exists:permissions,name'],
+            'avatar'        => ['sometimes','file','image','mimes:jpg,jpeg,png,webp','max:2048'],
         ]);
 
         $p = Personnel::create($data);
 
-        // rôles/permissions → user lié
-        if (!empty($data['roles']) || !empty($data['permissions'])) {
-            $user = $p->user()->first();
-            if ($user) {
-                if (!empty($data['roles']))       $user->syncRoles($data['roles']);
-                if (!empty($data['permissions'])) $user->syncPermissions($data['permissions']);
-            }
+        // upload avatar
+        if ($request->hasFile('avatar')) {
+            $path = $request->file('avatar')->store('personnels/avatars', 'public');
+            $p->forceFill(['avatar_path' => $path])->save();
         }
 
         return response()->json([
@@ -119,20 +107,7 @@ class PersonnelController extends Controller
      */
     public function update(Request $request, Personnel $personnel)
     {
-        $payload = $request->all();
-
-        // Aliases acceptés en entrée
-        if (array_key_exists('phone', $payload)) {
-            $payload['phone_alt'] = $payload['phone'];
-            unset($payload['phone']);
-        }
-        if (array_key_exists('hire_date', $payload)) {
-            $payload['hired_at'] = $payload['hire_date'];
-            unset($payload['hire_date']);
-        }
-        unset($payload['user_id']); // interdit de changer l'user lié
-
-        $data = validator($payload, [
+        $data = $request->validate([
             'matricule'     => ['nullable','string','max:50','unique:personnels,matricule,'.$personnel->id],
             'first_name'    => ['sometimes','string','max:100'],
             'last_name'     => ['sometimes','string','max:100'],
@@ -146,27 +121,31 @@ class PersonnelController extends Controller
             'job_title'     => ['nullable','string','max:150'],
             'hired_at'      => ['nullable','date'],
             'service_id'    => ['nullable','exists:services,id'],
+            'avatar'        => ['sometimes','file','image','mimes:jpg,jpeg,png,webp','max:2048'],
+            'remove_avatar' => ['sometimes','boolean'],
+        ]);
 
-            // optionnel : synchro rôles/permissions du user lié
-            'roles'         => ['sometimes','array'],
-            'roles.*'       => ['string','exists:roles,name'],
-            'permissions'   => ['sometimes','array'],
-            'permissions.*' => ['string','exists:permissions,name'],
-        ])->validate();
-
+        // mise à jour des champs simples
         $personnel->update($data);
 
-        if (array_key_exists('roles', $data) || array_key_exists('permissions', $data)) {
-            $user = $personnel->user()->first();
-            if ($user) {
-                if (array_key_exists('roles', $data))       $user->syncRoles($data['roles'] ?? []);
-                if (array_key_exists('permissions', $data)) $user->syncPermissions($data['permissions'] ?? []);
+        // suppression avatar
+        if ($request->boolean('remove_avatar') && $personnel->avatar_path) {
+            Storage::disk('public')->delete($personnel->avatar_path);
+            $personnel->update(['avatar_path' => null]);
+        }
+
+        // upload avatar
+        if ($request->hasFile('avatar')) {
+            if ($personnel->avatar_path) {
+                Storage::disk('public')->delete($personnel->avatar_path);
             }
+            $path = $request->file('avatar')->store('personnels/avatars', 'public');
+            $personnel->update(['avatar_path' => $path]);
         }
 
         return response()->json([
             'message' => 'Personnel modifié',
-            'data'    => $personnel->load(['user:id,name,email','service:id,name']),
+            'data'    => $personnel->fresh()->load(['user:id,name,email','service:id,name']),
         ]);
     }
 
@@ -175,7 +154,51 @@ class PersonnelController extends Controller
      */
     public function destroy(Personnel $personnel)
     {
+        if ($personnel->avatar_path) {
+            Storage::disk('public')->delete($personnel->avatar_path);
+        }
         $personnel->delete();
+
         return response()->json(['message' => 'Personnel supprimé']);
+    }
+
+    /**
+     * POST /api/v1/admin/personnels/{personnel}/avatar
+     * Upload/remplacement dédié (multipart form-data: avatar=File)
+     */
+    public function uploadAvatar(Request $request, Personnel $personnel)
+    {
+        $request->validate([
+            'avatar' => ['required','file','image','mimes:jpg,jpeg,png,webp','max:2048'],
+        ]);
+
+        if ($personnel->avatar_path) {
+            Storage::disk('public')->delete($personnel->avatar_path);
+        }
+
+        $path = $request->file('avatar')->store('personnels/avatars', 'public');
+        $personnel->forceFill(['avatar_path' => $path])->save();
+
+        return response()->json([
+            'message' => 'Avatar mis à jour',
+            'data'    => $personnel->fresh()->load(['user:id,name,email','service:id,name']),
+        ]);
+    }
+
+    /**
+     * DELETE /api/v1/admin/personnels/{personnel}/avatar
+     * Suppression dédiée
+     */
+    public function deleteAvatar(Personnel $personnel)
+    {
+        if ($personnel->avatar_path) {
+            Storage::disk('public')->delete($personnel->avatar_path);
+        }
+        $personnel->forceFill(['avatar_path' => null])->save();
+
+        return response()->json([
+            'message' => 'Avatar supprimé',
+            'data'    => $personnel->fresh()->load(['user:id,name,email','service:id,name']),
+        ]);
     }
 }

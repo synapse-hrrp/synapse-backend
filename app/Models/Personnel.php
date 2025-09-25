@@ -4,6 +4,7 @@ namespace App\Models;
 
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\Factories\HasFactory;
+use Illuminate\Support\Facades\Storage;
 
 class Personnel extends Model
 {
@@ -34,8 +35,8 @@ class Personnel extends Model
         'extra'         => 'array',
     ];
 
-    /** ➕ renvoie full_name dans les réponses JSON */
-    protected $appends = ['full_name'];
+    /** ➕ renvoyer full_name & avatar_url automatiquement dans le JSON */
+    protected $appends = ['full_name', 'avatar_url'];
 
     // ── Relations ──────────────────────────────────────────────────────────
 
@@ -82,5 +83,12 @@ class Personnel extends Model
     public function getFullNameAttribute(): string
     {
         return trim(($this->first_name ?? '').' '.($this->last_name ?? ''));
+    }
+
+    /** URL publique de l’avatar (disk "public") */
+    public function getAvatarUrlAttribute(): ?string
+    {
+        if (! $this->avatar_path) return null;
+        return Storage::disk('public')->url($this->avatar_path);
     }
 }

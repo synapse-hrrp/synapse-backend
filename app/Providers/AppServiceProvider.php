@@ -10,17 +10,11 @@ use App\Observers\PersonnelObserver;
 
 class AppServiceProvider extends ServiceProvider
 {
-    /**
-     * Register any application services.
-     */
     public function register(): void
     {
         //
     }
 
-    /**
-     * Bootstrap any application services.
-     */
     public function boot(): void
     {
         // Enregistre l'observer du modèle Personnel (si la classe existe)
