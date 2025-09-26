@@ -7,11 +7,8 @@ use App\Http\Controllers\Api\AuthController;
 use App\Http\Controllers\Api\Admin\UserManagementController;
 use App\Http\Controllers\Api\Admin\PersonnelController;
 use App\Http\Controllers\Api\ServiceController;
-<<<<<<< HEAD
 use App\Http\Controllers\IncomingController;
-=======
 use App\Http\Controllers\Api\LookupController;
->>>>>>> 49bf2fc889e0b08a0c05c9b2ea2b6cf95cc9c77d
 
 use App\Http\Controllers\Api\ConsultationController;
 use App\Http\Controllers\Api\PatientController;
@@ -38,7 +35,6 @@ use App\Http\Controllers\Api\KinesitherapieController;
 use App\Http\Controllers\Api\AruController;
 use App\Http\Controllers\Api\BlocOperatoireController;
 use App\Http\Controllers\Api\MedecineController;
-
 
 Route::prefix('v1')->group(function () {
 
@@ -84,18 +80,17 @@ Route::prefix('v1')->group(function () {
         ->apiResource('services', ServiceController::class)
         ->scoped(['service' => 'slug']);
 
-<<<<<<< HEAD
-    Route::post('{service}/incoming', [IncomingController::class, 'store'])
+    // Enregistrement des "incoming" pour un service donné
+    Route::middleware(['auth:sanctum','throttle:auth'])
+        ->post('services/{service}/incoming', [IncomingController::class, 'store'])
         ->name('v1.services.incoming');
-=======
+
     // Options pour un personnel donné (liste déroulante + sélection actuelle)
     // GET /api/v1/services/options-for-personnel/{personnel}?active=1
     Route::middleware(['auth:sanctum','throttle:auth'])
         ->get('services/options-for-personnel/{personnel}', [ServiceController::class, 'optionsForPersonnel'])
         ->whereNumber('personnel')
         ->name('v1.services.options_for_personnel');
-
->>>>>>> 49bf2fc889e0b08a0c05c9b2ea2b6cf95cc9c77d
 
     // ── Patients (/api/v1/patients) ───────────────────────────────────────
     Route::middleware(['auth:sanctum','throttle:auth'])->group(function () {
