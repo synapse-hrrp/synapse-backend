@@ -15,7 +15,7 @@ class Kernel extends HttpKernel
         \Illuminate\Foundation\Http\Middleware\ConvertEmptyStringsToNull::class,
         \Illuminate\Foundation\Http\Middleware\PreventRequestsDuringMaintenance::class,
 
-        // ⬇️ Ajouts sécurité
+        // Optionnels : seulement si ces middlewares existent chez toi
         \App\Http\Middleware\SecurityHeaders::class,
         \App\Http\Middleware\ForceHttps::class,
     ];
@@ -29,22 +29,11 @@ class Kernel extends HttpKernel
             \App\Http\Middleware\VerifyCsrfToken::class,
             \Illuminate\Routing\Middleware\SubstituteBindings::class,
         ],
+
         'api' => [
-            \App\Http\Middleware\SecurityHeaders::class,
-            \App\Http\Middleware\ThrottleRequests::class . ':api',
+            \App\Http\Middleware\SecurityHeaders::class, // si présent
+            'throttle:api',                               // ✅ alias recommandé
             \Illuminate\Routing\Middleware\SubstituteBindings::class,
         ],
-
     ];
-
-    protected function schedule(\Illuminate\Console\Scheduling\Schedule $schedule): void
-    {
-        $schedule->call(function () {
-            \Laravel\Sanctum\PersonalAccessToken::query()
-                ->whereNotNull('expires_at')
-                ->where('expires_at', '<', now())
-                ->delete();
-        })->daily()->name('purge-expired-sanctum-tokens');
-    }
-
 }

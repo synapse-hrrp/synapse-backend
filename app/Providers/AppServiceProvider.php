@@ -7,6 +7,9 @@ use App\Models\Personnel;
 use App\Models\Visite;
 use App\Observers\VisiteObserver;
 use App\Observers\PersonnelObserver;
+use App\Models\Examen;
+use App\Observers\ExamenObserver;
+
 
 class AppServiceProvider extends ServiceProvider
 {
@@ -26,5 +29,10 @@ class AppServiceProvider extends ServiceProvider
         if (class_exists(VisiteObserver::class)) {
             Visite::observe(VisiteObserver::class);
         }
+
+        Examen::observe(ExamenObserver::class);
     }
 }
+
+
+
