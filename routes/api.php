@@ -22,6 +22,8 @@ use App\Http\Controllers\Api\PansementController;
 use App\Http\Controllers\Api\FactureController;
 use App\Http\Controllers\Api\FactureLigneController;
 use App\Http\Controllers\Api\ReglementController;
+use App\Http\Controllers\Api\FactureItemController;
+
 
 // Finance “module” (invoices / payments)
 use App\Http\Controllers\Api\Finance\InvoiceController;
@@ -681,6 +683,51 @@ Route::prefix('v1')->group(function () {
             ->name('v1.inventory.locations.destroy');
     });
 
+
+    // ── Reports inventaire (réassort & péremptions) ───────────────────────────
+    Route::prefix('inventory')->middleware(['auth:sanctum','throttle:auth'])->group(function () {
+
+        // Réactifs sous le point de commande (reorder)
+        // GET /api/v1/inventory/reports/reorders
+        Route::get('reports/reorders', [ReportController::class, 'reorders'])
+            ->middleware('ability:inventory.view')
+            ->name('v1.inventory.reports.reorders');
+
+        // Lots qui expirent sous N jours (par défaut 30)
+        // GET /api/v1/inventory/reports/expiries?days=30
+        Route::get('reports/expiries', [ReportController::class, 'expiries'])
+            ->middleware('ability:inventory.view')
+            ->name('v1.inventory.reports.expiries');
+    });
+
+    
+
+    // ── Caisse centrale : Facture Items (/api/v1/facture-items) ───────────────
+    Route::middleware(['auth:sanctum','throttle:auth'])->group(function () {
+        // Créer un item (crée une nouvelle facture si facture_id omis)
+        Route::post('facture-items', [FactureItemController::class, 'store'])
+            ->middleware('ability:cashier.item.create')
+            ->name('v1.facture_items.store');
+
+        // Mettre à jour un item
+        Route::patch('facture-items/{facture_item}', [FactureItemController::class, 'update'])
+            ->middleware('ability:cashier.item.update')
+            ->name('v1.facture_items.update');
+
+        // Supprimer un item
+        Route::delete('facture-items/{facture_item}', [FactureItemController::class, 'destroy'])
+            ->middleware('ability:cashier.item.delete')
+            ->name('v1.facture_items.destroy');
+
+        // (Optionnel) Lister / Voir un item
+        // Route::get('facture-items', [FactureItemController::class, 'index'])
+        //     ->middleware('ability:cashier.item.view')
+        //     ->name('v1.facture_items.index');
+
+        // Route::get('facture-items/{facture_item}', [FactureItemController::class, 'show'])
+        //     ->middleware('ability:cashier.item.view')
+        //     ->name('v1.facture_items.show');
+    });
 
 
 });

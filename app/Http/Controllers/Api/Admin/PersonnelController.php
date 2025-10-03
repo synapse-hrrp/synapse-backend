@@ -5,7 +5,6 @@ namespace App\Http\Controllers\Api\Admin;
 use App\Http\Controllers\Controller;
 use App\Models\Personnel;
 use Illuminate\Http\Request;
-use Illuminate\Support\Facades\Storage;
 
 class PersonnelController extends Controller
 {
@@ -17,7 +16,8 @@ class PersonnelController extends Controller
         $userId   = $request->query('user_id');
         $service  = $request->query('service_id');
         $q        = trim((string) $request->query('q', ''));
-        $perPage  = max(1, min((int) $request->query('per_page', 10), 100));
+        $perPage  = (int) $request->query('per_page', 10);
+        $perPage  = max(1, min($perPage, 100));
 
         $query = Personnel::query()->with(['user:id,name,email', 'service:id,name']);
 
@@ -44,23 +44,11 @@ class PersonnelController extends Controller
     }
 
     /**
-     * GET /api/v1/admin/personnels/by-user/{user_id}
-     */
-    public function byUser(int $user_id)
-    {
-        $personnel = Personnel::with(['user:id,name,email', 'service:id,name'])
-            ->where('user_id', $user_id)
-            ->firstOrFail();
-
-        return response()->json($personnel);
-    }
-
-    /**
      * POST /api/v1/admin/personnels
      */
     public function store(Request $request)
     {
-        $data = $request->validate([
+        $validated = $request->validate([
             'user_id'       => ['required','exists:users,id','unique:personnels,user_id'],
             'matricule'     => ['nullable','string','max:50','unique:personnels,matricule'],
             'first_name'    => ['required','string','max:100'],
@@ -75,15 +63,42 @@ class PersonnelController extends Controller
             'job_title'     => ['nullable','string','max:150'],
             'hired_at'      => ['nullable','date'],
             'service_id'    => ['nullable','exists:services,id'],
-            'avatar'        => ['sometimes','file','image','mimes:jpg,jpeg,png,webp','max:2048'],
+            'roles'         => ['sometimes','array'],
+            'roles.*'       => ['string','exists:roles,name'],
+            'permissions'   => ['sometimes','array'],
+            'permissions.*' => ['string','exists:permissions,name'],
         ]);
 
-        $p = Personnel::create($data);
+        // Séparer roles/permissions envoyés par le frontend
+        $roles       = $validated['roles'] ?? [];
+        $permissions = $validated['permissions'] ?? [];
+        unset($validated['roles'], $validated['permissions']);
 
-        // upload avatar
-        if ($request->hasFile('avatar')) {
-            $path = $request->file('avatar')->store('personnels/avatars', 'public');
-            $p->forceFill(['avatar_path' => $path])->save();
+        $p = Personnel::create($validated);
+
+        // Attribuer le rôle automatique selon le service si roles non fournis
+        $serviceRoleMap = [
+            'laboratoire' => 'laborantin',
+            'pharmacie'   => 'pharmacien',
+            'finance'     => 'caissier',
+            'consultations' => 'medecin',
+            'accueil'   => 'reception',
+            'pansement'   => 'infirmier',
+            'gestion-malade' => 'gestionnaire',
+            // tu peux compléter selon les services et rôles existants
+        ];
+
+        $user = $p->user;
+        if ($user) {
+            if (!empty($roles)) {
+                $user->syncRoles($roles);
+            } elseif ($p->service && isset($serviceRoleMap[$p->service->slug])) {
+                $user->syncRoles([$serviceRoleMap[$p->service->slug]]);
+            }
+
+            if (!empty($permissions)) {
+                $user->syncPermissions($permissions);
+            }
         }
 
         return response()->json([
@@ -93,21 +108,22 @@ class PersonnelController extends Controller
     }
 
     /**
-     * GET /api/v1/admin/personnels/{personnel}
-     */
-    public function show(Personnel $personnel)
-    {
-        return response()->json(
-            $personnel->load(['user:id,name,email','service:id,name'])
-        );
-    }
-
-    /**
      * PATCH /api/v1/admin/personnels/{personnel}
      */
     public function update(Request $request, Personnel $personnel)
     {
-        $data = $request->validate([
+        $payload = $request->all();
+        if (array_key_exists('phone', $payload)) {
+            $payload['phone_alt'] = $payload['phone'];
+            unset($payload['phone']);
+        }
+        if (array_key_exists('hire_date', $payload)) {
+            $payload['hired_at'] = $payload['hire_date'];
+            unset($payload['hire_date']);
+        }
+        unset($payload['user_id']);
+
+        $validated = validator($payload, [
             'matricule'     => ['nullable','string','max:50','unique:personnels,matricule,'.$personnel->id],
             'first_name'    => ['sometimes','string','max:100'],
             'last_name'     => ['sometimes','string','max:100'],
@@ -121,32 +137,56 @@ class PersonnelController extends Controller
             'job_title'     => ['nullable','string','max:150'],
             'hired_at'      => ['nullable','date'],
             'service_id'    => ['nullable','exists:services,id'],
-            'avatar'        => ['sometimes','file','image','mimes:jpg,jpeg,png,webp','max:2048'],
-            'remove_avatar' => ['sometimes','boolean'],
-        ]);
+            'roles'         => ['sometimes','array'],
+            'roles.*'       => ['string','exists:roles,name'],
+            'permissions'   => ['sometimes','array'],
+            'permissions.*' => ['string','exists:permissions,name'],
+        ])->validate();
 
-        // mise à jour des champs simples
-        $personnel->update($data);
+        $roles       = $validated['roles'] ?? null;
+        $permissions = $validated['permissions'] ?? null;
+        unset($validated['roles'], $validated['permissions']);
 
-        // suppression avatar
-        if ($request->boolean('remove_avatar') && $personnel->avatar_path) {
-            Storage::disk('public')->delete($personnel->avatar_path);
-            $personnel->update(['avatar_path' => null]);
-        }
+        $personnel->update($validated);
 
-        // upload avatar
-        if ($request->hasFile('avatar')) {
-            if ($personnel->avatar_path) {
-                Storage::disk('public')->delete($personnel->avatar_path);
+        $serviceRoleMap = [
+            'laboratoire' => 'laborantin',
+            'pharmacie'   => 'pharmacien',
+            'finance'     => 'caissier',
+            'consultations' => 'medecin',
+            'reception'   => 'reception',
+            'pansement'   => 'infirmier',
+            'gestion-malade' => 'gestionnaire',
+        ];
+
+        $user = $personnel->user;
+        if ($user) {
+            if ($roles !== null) {
+                $user->syncRoles($roles);
+            } elseif ($personnel->service && isset($serviceRoleMap[$personnel->service->slug])) {
+                $user->syncRoles([$serviceRoleMap[$personnel->service->slug]]);
             }
-            $path = $request->file('avatar')->store('personnels/avatars', 'public');
-            $personnel->update(['avatar_path' => $path]);
+
+            if ($permissions !== null) {
+                $user->syncPermissions($permissions);
+            }
         }
 
         return response()->json([
             'message' => 'Personnel modifié',
-            'data'    => $personnel->fresh()->load(['user:id,name,email','service:id,name']),
+            'data'    => $personnel->load(['user:id,name,email','service:id,name']),
         ]);
+    }
+
+    // Les autres méthodes show() et destroy() restent inchangées
+        /**
+     * GET /api/v1/admin/personnels/{personnel}
+     */
+    public function show(Personnel $personnel)
+    {
+        return response()->json(
+            $personnel->load(['user:id,name,email', 'service:id,name'])
+        );
     }
 
     /**
@@ -154,51 +194,11 @@ class PersonnelController extends Controller
      */
     public function destroy(Personnel $personnel)
     {
-        if ($personnel->avatar_path) {
-            Storage::disk('public')->delete($personnel->avatar_path);
-        }
         $personnel->delete();
 
-        return response()->json(['message' => 'Personnel supprimé']);
-    }
-
-    /**
-     * POST /api/v1/admin/personnels/{personnel}/avatar
-     * Upload/remplacement dédié (multipart form-data: avatar=File)
-     */
-    public function uploadAvatar(Request $request, Personnel $personnel)
-    {
-        $request->validate([
-            'avatar' => ['required','file','image','mimes:jpg,jpeg,png,webp','max:2048'],
-        ]);
-
-        if ($personnel->avatar_path) {
-            Storage::disk('public')->delete($personnel->avatar_path);
-        }
-
-        $path = $request->file('avatar')->store('personnels/avatars', 'public');
-        $personnel->forceFill(['avatar_path' => $path])->save();
-
         return response()->json([
-            'message' => 'Avatar mis à jour',
-            'data'    => $personnel->fresh()->load(['user:id,name,email','service:id,name']),
+            'message' => 'Personnel supprimé avec succès'
         ]);
     }
 
-    /**
-     * DELETE /api/v1/admin/personnels/{personnel}/avatar
-     * Suppression dédiée
-     */
-    public function deleteAvatar(Personnel $personnel)
-    {
-        if ($personnel->avatar_path) {
-            Storage::disk('public')->delete($personnel->avatar_path);
-        }
-        $personnel->forceFill(['avatar_path' => null])->save();
-
-        return response()->json([
-            'message' => 'Avatar supprimé',
-            'data'    => $personnel->fresh()->load(['user:id,name,email','service:id,name']),
-        ]);
-    }
 }

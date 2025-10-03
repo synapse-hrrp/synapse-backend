@@ -10,7 +10,7 @@ class ServiceSeeder extends Seeder
     public function run(): void
     {
         $items = [
-            ['slug'=>'accueil', 'name'=>'Accueil / Réception'],
+            ['slug'=>'reception', 'name'=>'Accueil / Réception'],
             ['slug'=>'consultations',   'name'=>'Consultations'],
             ['slug'=>'medecine',        'name'=>'Médecine Générale'],
             ['slug'=>'aru',             'name'=>'Accueil & Urgences (ARU)'],

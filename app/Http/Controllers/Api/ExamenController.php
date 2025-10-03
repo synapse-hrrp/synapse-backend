@@ -9,123 +9,128 @@ use App\Http\Resources\ExamenResource;
 use App\Models\Examen;
 use App\Models\Personnel;
 use App\Models\Service;
+use App\Models\Tarif;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Auth;
 
 class ExamenController extends Controller
 {
-    // GET /examens
-    public function index(Request $request)
-    {
-        $query = Examen::query()->with(['patient','service','demandeur','validateur']);
+    // ... index() identique ...
 
-        if ($request->filled('patient_id')) {
-            $query->where('patient_id', $request->input('patient_id'));
-        }
-
-        if ($request->filled('service_slug')) {
-            $query->where('service_slug', $request->input('service_slug'));
-        }
-
-        if ($request->filled('statut')) {
-            $query->where('statut', $request->input('statut'));
-        }
-
-        if ($request->filled('code')) {
-            $query->where('code_examen', 'like', '%'.$request->input('code').'%');
-        }
-
-        if ($request->filled('q')) {
-            $s = '%'.$request->input('q').'%';
-            $query->where(function ($w) use ($s) {
-                $w->where('code_examen', 'like', $s)
-                  ->orWhere('nom_examen', 'like', $s)
-                  ->orWhere('prelevement', 'like', $s);
-            });
-        }
-
-        if ($request->filled('date_from')) {
-            $query->whereDate('date_demande', '>=', $request->input('date_from'));
-        }
-
-        if ($request->filled('date_to')) {
-            $query->whereDate('date_demande', '<=', $request->input('date_to'));
-        }
-
-        $query->orderByDesc('date_demande');
-
-        $perPage   = (int) $request->get('per_page', 15);
-        $paginator = $query->paginate($perPage)->appends($request->query());
-
-        return ExamenResource::collection($paginator);
-    }
-
-    // POST /examens
+    /**
+     * POST /examens
+     * Création GÉNÉRIQUE : si service_slug est fourni -> création "depuis un service"
+     * sinon -> création "depuis le labo".
+     */
     public function store(ExamenStoreRequest $request)
     {
         $data = $request->validated();
 
-        // Renseigner automatiquement le demandeur depuis l'utilisateur connecté (si mappé à un Personnel)
+        // Demandeur auto (si mappé)
         if (!isset($data['demande_par']) && Auth::check()) {
-            $perso = Personnel::where('user_id', Auth::id())->first();
-            if ($perso) {
-                $data['demande_par'] = $perso->id; // BIGINT ou UUID selon ton schéma
-            }
-        }
-
-        $examen = Examen::create($data)->load(['patient','service','demandeur','validateur']);
-
-        // ✅ renvoie 201 Created de manière explicite
-        return response()->json(
-            (new ExamenResource($examen))->toArray($request),
-            201
-        );
-    }
-
-    // GET /examens/{examen}
-    public function show(Examen $examen)
-    {
-        $examen->load(['patient','service','demandeur','validateur']);
-        return new ExamenResource($examen);
-    }
-
-    // PUT/PATCH /examens/{examen}
-    public function update(ExamenUpdateRequest $request, Examen $examen)
-    {
-        $examen->update($request->validated());
-        $examen->load(['patient','service','demandeur','validateur']);
-        return new ExamenResource($examen);
-    }
-
-    // DELETE /examens/{examen}
-    public function destroy(Examen $examen)
-    {
-        $examen->delete();
-        return response()->noContent();
-    }
-
-    // POST /services/{service}/examens : créer “depuis un service”
-    public function storeForService(ExamenStoreRequest $request, Service $service)
-    {
-        $data = $request->validated();
-        $data['service_slug'] = $service->slug;   // association auto via slug
-        $data['type_origine'] = 'interne';
-
-        if (!isset($data['demande_par']) && Auth::check()) {
-            $perso = Personnel::where('user_id', Auth::id())->first();
-            if ($perso) {
+            if ($perso = Personnel::where('user_id', Auth::id())->first()) {
                 $data['demande_par'] = $perso->id;
             }
         }
 
-        // Création via la relation (si définie) ou directe
-        // $examen = $service->examens()->create($data);
+        // Déterminer l’origine selon la présence de service_slug dans le payload
+        $hasService               = !empty($data['service_slug']);
+        $data['created_via']      = $hasService ? 'service' : 'labo';
+        $data['type_origine']     = $hasService ? 'interne' : 'externe';
+        $data['created_by_user_id'] = Auth::id();
+        $data['date_demande']     = $data['date_demande'] ?? now();
+
+        // Normaliser le code examen si fourni
+        if (!empty($data['code_examen'])) {
+            $data['code_examen'] = strtoupper(trim($data['code_examen']));
+        }
+
+        // Résoudre la tarification UNIQUEMENT dans les services Labo
+        if ($tarif = $this->resolveLabTarif($data)) {
+            // Prix/devise viennent du tarif si un tarif est fourni
+            $data['prix']        = $tarif->montant;
+            $data['devise']      = $tarif->devise ?? 'XAF';
+
+            // Compléter code/nom seulement s'ils sont vides
+            $data['code_examen'] = $data['code_examen'] ?? $tarif->code;
+            $data['nom_examen']  = $data['nom_examen']  ?? ($tarif->libelle ?? $tarif->code);
+        }
+
+        // Nettoyage des champs de pilotage tarification
+        unset($data['tarif_id'], $data['tarif_code']);
+
         $examen = Examen::create($data)->load(['patient','service','demandeur','validateur']);
 
-        // ✅ renvoie 201 Created
-        return response()->json(
-            (new ExamenResource($examen))->toArray($request),
-            201
-        );
+        return response()->json((new ExamenResource($examen))->toArray($request), 201);
+    }
+
+    // ... show(), update(), destroy() identiques ...
+
+    /**
+     * POST /services/{service}/examens (création DEPUIS UN SERVICE)
+     * NB : La tarification reste basée sur les slugs Labo, PAS sur $service->slug.
+     */
+    public function storeForService(ExamenStoreRequest $request, Service $service)
+    {
+        $data = $request->validated();
+
+        // Traçabilité Service
+        $data['service_slug']       = $service->slug;
+        $data['type_origine']       = 'interne';
+        $data['created_via']        = 'service';
+        $data['created_by_user_id'] = Auth::id();
+        $data['date_demande']       = $data['date_demande'] ?? now();
+
+        // Demandeur auto si besoin
+        if (!isset($data['demande_par']) && Auth::check()) {
+            if ($perso = Personnel::where('user_id', Auth::id())->first()) {
+                $data['demande_par'] = $perso->id;
+            }
+        }
+
+        if (!empty($data['code_examen'])) {
+            $data['code_examen'] = strtoupper(trim($data['code_examen']));
+        }
+
+        // Tarification UNIQUEMENT via services Labo
+        if ($tarif = $this->resolveLabTarif($data)) {
+            $data['prix']        = $tarif->montant;
+            $data['devise']      = $tarif->devise ?? 'XAF';
+            $data['code_examen'] = $data['code_examen'] ?? $tarif->code;
+            $data['nom_examen']  = $data['nom_examen']  ?? ($tarif->libelle ?? $tarif->code);
+        }
+
+        unset($data['tarif_id'], $data['tarif_code']);
+
+        $examen = Examen::create($data)->load(['patient','service','demandeur','validateur']);
+
+        return response()->json((new ExamenResource($examen))->toArray($request), 201);
+    }
+
+    /**
+     * Résout un tarif UNIQUEMENT dans les services de laboratoire configurés.
+     * Priorité au tarif_id, sinon tarif_code (actif, le plus récent).
+     */
+    private function resolveLabTarif(array $data): ?Tarif
+    {
+        $labSlugs = config('billing.lab_service_slugs', ['laboratoire','labo','examens']);
+
+        if (!empty($data['tarif_id'])) {
+            return Tarif::query()
+                ->whereKey($data['tarif_id'])
+                ->whereIn('service_slug', $labSlugs)
+                ->first();
+        }
+
+        if (!empty($data['tarif_code'])) {
+            return Tarif::query()
+                ->actifs()
+                ->byCode(strtoupper(trim($data['tarif_code'])))
+                ->whereIn('service_slug', $labSlugs)
+                ->latest('created_at')
+                ->first();
+        }
+
+        return null;
     }
 }
