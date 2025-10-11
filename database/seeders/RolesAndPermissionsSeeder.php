@@ -13,7 +13,6 @@ class RolesAndPermissionsSeeder extends Seeder
         // Vider le cache Spatie
         app()[\Spatie\Permission\PermissionRegistrar::class]->forgetCachedPermissions();
 
-        // Guard utilisé pour les rôles/permissions
         $guard = 'web';
 
         // --- Permissions par domaine
@@ -22,14 +21,27 @@ class RolesAndPermissionsSeeder extends Seeder
             'patients.read', 'patients.write',
             'visites.read',  'visites.write',
 
-            // Patients (granulaire – on les garde)
+            // Patients
             'patients.view', 'patients.create', 'patients.update', 'patients.delete', 'patients.orient',
 
             // Consultations
             'consultations.view', 'consultations.create', 'consultations.update', 'consultations.delete',
 
-            // Laboratoire
-            'labo.request.create', 'labo.result.write', 'labo.view',
+            // Examens
+            'examen.view', 'examen.request.create', 'examen.result.write', 'examen.create',
+
+            // Examens par service
+            'medecine.examen.create',
+            'aru.examen.create',
+            'gynecologie.examen.create',
+            'maternite.examen.create',
+            'pediatrie.examen.create',
+            'sanitaire.examen.create',
+            'consultations.examen.create',
+            'smi.examen.create',
+
+            // Tarifs (gestion des prix par l’admin)
+            'tarif.view', 'tarif.create', 'tarif.update', 'tarif.delete',
 
             // Pharmacie
             'pharma.stock.view', 'pharma.sale.create', 'pharma.ordonnance.validate',
@@ -64,7 +76,7 @@ class RolesAndPermissionsSeeder extends Seeder
             'pourcentage.view', 'pourcentage.update',
         ];
 
-        // Créer / maj les permissions avec guard_name
+        // Création / mise à jour des permissions
         foreach ($perms as $p) {
             Permission::firstOrCreate(
                 ['name' => $p, 'guard_name' => $guard],
@@ -72,12 +84,12 @@ class RolesAndPermissionsSeeder extends Seeder
             );
         }
 
-        // --- Rôles (répartition cohérente)
+        // --- Rôles
         $roles = [
             // Admin : tout
             'admin' => $perms,
 
-            // Réception : crée/voit patients & visites
+            // Réception
             'reception' => [
                 'patients.read','patients.write',
                 'patients.view','patients.create','patients.orient',
@@ -85,15 +97,18 @@ class RolesAndPermissionsSeeder extends Seeder
                 'stats.view',
             ],
 
-            // Médecin : lecture/écriture patients & visites, consultations
+            // Médecin
             'medecin' => [
                 'patients.read',
                 'visites.read','visites.write',
                 'consultations.view','consultations.create','consultations.update',
+                'examen.create',
+                'medecine.examen.create','aru.examen.create','gynecologie.examen.create',
+                'maternite.examen.create','pediatrie.examen.create','sanitaire.examen.create','consultations.examen.create','smi.examen.create',
                 'stats.view',
             ],
 
-            // Infirmier : lecture patients, écritures pansements & visites
+            // Infirmier
             'infirmier' => [
                 'patients.read',
                 'visites.read','visites.write',
@@ -101,28 +116,28 @@ class RolesAndPermissionsSeeder extends Seeder
                 'stats.view',
             ],
 
-            // Laborantin : labo + lecture visites
+            // Laborantin
             'laborantin' => [
-                'labo.view','labo.request.create','labo.result.write',
+                'examen.view','examen.request.create','examen.result.write',
                 'visites.read',
                 'stats.view',
             ],
 
-            // Pharmacien : pharmacie + lecture visites
+            // Pharmacien
             'pharmacien' => [
                 'pharma.stock.view','pharma.sale.create','pharma.ordonnance.validate',
                 'visites.read',
                 'stats.view',
             ],
 
-            // Caissier : finance + lecture visites
+            // Caissier
             'caissier' => [
                 'finance.invoice.view','finance.invoice.create','finance.payment.create',
                 'visites.read',
                 'stats.view',
             ],
 
-            // Gestionnaire : gestion des users + stats + lecture visites
+            // Gestionnaire
             'gestionnaire' => [
                 'users.view',
                 'visites.read',

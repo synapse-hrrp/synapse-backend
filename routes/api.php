@@ -23,6 +23,9 @@ use App\Http\Controllers\Api\FactureController;
 use App\Http\Controllers\Api\FactureLigneController;
 use App\Http\Controllers\Api\ReglementController;
 use App\Http\Controllers\Api\FactureItemController;
+// ── Controller Tarif ──────────────────────────────────────────────────────
+use App\Http\Controllers\Api\TarifController;
+
 
 
 // Finance “module” (invoices / payments)
@@ -728,6 +731,40 @@ Route::prefix('v1')->group(function () {
         //     ->middleware('ability:cashier.item.view')
         //     ->name('v1.facture_items.show');
     });
+
+
+    // ── Tarifs (/api/v1/tarifs) ───────────────────────────────────────────
+    Route::middleware(['auth:sanctum','throttle:auth'])->group(function () {
+
+        Route::get('tarifs', [TarifController::class, 'index'])
+            ->name('v1.tarifs.index');
+
+        Route::get('tarifs/actifs', [TarifController::class, 'actifs'])
+            ->name('v1.tarifs.actifs');
+
+        Route::get('tarifs/by-code/{code}', [TarifController::class, 'byCode'])
+            ->name('v1.tarifs.by_code');
+
+        Route::get('tarifs/{tarif}', [TarifController::class, 'show'])
+            ->whereUuid('tarif')
+            ->name('v1.tarifs.show');
+
+        Route::post('tarifs', [TarifController::class, 'store'])
+            ->name('v1.tarifs.store');
+
+        Route::match(['put','patch'], 'tarifs/{tarif}', [TarifController::class, 'update'])
+            ->whereUuid('tarif')
+            ->name('v1.tarifs.update');
+
+        Route::delete('tarifs/{tarif}', [TarifController::class, 'destroy'])
+            ->whereUuid('tarif')
+            ->name('v1.tarifs.destroy');
+
+        Route::patch('tarifs/{tarif}/toggle', [TarifController::class, 'toggle'])
+            ->whereUuid('tarif')
+            ->name('v1.tarifs.toggle');
+    });
+
 
 
 });
