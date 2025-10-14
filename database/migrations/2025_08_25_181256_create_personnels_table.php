@@ -27,7 +27,6 @@ return new class extends Migration {
             $table->string('city')->nullable();
             $table->string('country')->nullable();
             $table->string('job_title')->nullable();
-            $table->string('avatar_path')->nullable();
             $table->date('hired_at')->nullable();
 
             // rattachement à un service EXISTANT
@@ -36,10 +35,11 @@ return new class extends Migration {
                   ->constrained('services')
                   ->nullOnDelete();
 
-            $table->string('avatar_path')->nullable();
+            $table->string('avatar_path')->nullable(); // <- doublon supprimé
             $table->json('extra')->nullable();
 
             $table->timestamps();
+            $table->softDeletes();
 
             $table->index(['last_name','first_name']);
             $table->index('service_id');

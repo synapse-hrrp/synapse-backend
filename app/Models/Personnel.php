@@ -4,11 +4,12 @@ namespace App\Models;
 
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\Factories\HasFactory;
+use Illuminate\Database\Eloquent\SoftDeletes;
 use Illuminate\Support\Facades\Storage;
 
 class Personnel extends Model
 {
-    use HasFactory;
+    use HasFactory, SoftDeletes;
 
     protected $fillable = [
         'user_id',
@@ -18,13 +19,13 @@ class Personnel extends Model
         'sex',
         'date_of_birth',
         'cin',
-        'phone_alt',   // téléphone secondaire uniquement ici
+        'phone_alt',
         'address',
         'city',
         'country',
         'job_title',
         'hired_at',
-        'service_id',  // ✅ le service vit ici
+        'service_id',
         'avatar_path',
         'extra',
     ];
@@ -35,7 +36,6 @@ class Personnel extends Model
         'extra'         => 'array',
     ];
 
-    /** ➕ renvoyer full_name & avatar_url automatiquement dans le JSON */
     protected $appends = ['full_name', 'avatar_url'];
 
     // ── Relations ──────────────────────────────────────────────────────────
@@ -45,10 +45,15 @@ class Personnel extends Model
         return $this->belongsTo(User::class);
     }
 
-    /** Service principal de la personne. */
     public function service()
     {
         return $this->belongsTo(Service::class);
+    }
+
+    /** Profil médecin (si la personne est médecin) */
+    public function medecin()
+    {
+        return $this->hasOne(Medecin::class);
     }
 
     // ── Scopes ─────────────────────────────────────────────────────────────
@@ -67,25 +72,19 @@ class Personnel extends Model
         });
     }
 
+    /** Filtre uniquement les personnels qui ont un profil médecin */
     public function scopeMedecins($q)
     {
-        // version tolérante aux accents/majuscules
-        return $q->where(function($w) {
-            $w->whereRaw('LOWER(job_title) LIKE ?', ['médecin%'])
-              ->orWhereRaw('LOWER(job_title) LIKE ?', ['medecin%'])
-              ->orWhereRaw('LOWER(job_title) LIKE ?', ['docteur%']);
-        });
+        return $q->whereHas('medecin');
     }
 
     // ── Accessors ──────────────────────────────────────────────────────────
 
-    /** Nom complet RH */
     public function getFullNameAttribute(): string
     {
         return trim(($this->first_name ?? '').' '.($this->last_name ?? ''));
     }
 
-    /** URL publique de l’avatar (disk "public") */
     public function getAvatarUrlAttribute(): ?string
     {
         if (! $this->avatar_path) return null;

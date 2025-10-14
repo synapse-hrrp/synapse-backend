@@ -100,7 +100,6 @@ class RolesAndPermissionsSeeder extends Seeder
             // Médecin
             'medecin' => [
                 'patients.read',
-                'visites.read','visites.write',
                 'consultations.view','consultations.create','consultations.update',
                 'examen.create',
                 'medecine.examen.create','aru.examen.create','gynecologie.examen.create',
@@ -111,7 +110,6 @@ class RolesAndPermissionsSeeder extends Seeder
             // Infirmier
             'infirmier' => [
                 'patients.read',
-                'visites.read','visites.write',
                 'pansement.view','pansement.create','pansement.update',
                 'stats.view',
             ],
@@ -119,14 +117,12 @@ class RolesAndPermissionsSeeder extends Seeder
             // Laborantin
             'laborantin' => [
                 'examen.view','examen.request.create','examen.result.write',
-                'visites.read',
                 'stats.view',
             ],
 
             // Pharmacien
             'pharmacien' => [
                 'pharma.stock.view','pharma.sale.create','pharma.ordonnance.validate',
-                'visites.read',
                 'stats.view',
             ],
 
@@ -140,7 +136,6 @@ class RolesAndPermissionsSeeder extends Seeder
             // Gestionnaire
             'gestionnaire' => [
                 'users.view',
-                'visites.read',
                 'stats.view',
             ],
         ];
