@@ -3,13 +3,28 @@
 namespace App\Providers;
 
 use Illuminate\Support\ServiceProvider;
+
+// Modèles déjà présents
 use App\Models\Personnel;
 use App\Models\Visite;
+use App\Models\Examen;
+
+// ➕ Nouveaux modèles
+use App\Models\Echographie;
+use App\Models\Hospitalisation;
+use App\Models\DeclarationNaissance;
+use App\Models\BilletSortie;
+
+// Observers existants
 use App\Observers\VisiteObserver;
 use App\Observers\PersonnelObserver;
-use App\Models\Examen;
 use App\Observers\ExamenObserver;
 
+// ➕ Nouveaux observers
+use App\Observers\EchographieObserver;
+use App\Observers\HospitalisationObserver;
+use App\Observers\DeclarationNaissanceObserver;
+use App\Observers\BilletSortieObserver;
 
 class AppServiceProvider extends ServiceProvider
 {
@@ -20,19 +35,34 @@ class AppServiceProvider extends ServiceProvider
 
     public function boot(): void
     {
-        // Enregistre l'observer du modèle Personnel (si la classe existe)
+        // — Observers existants (avec sécurité sur la classe)
         if (class_exists(PersonnelObserver::class)) {
             Personnel::observe(PersonnelObserver::class);
         }
 
-        // Enregistre l'observer du modèle Visite (si la classe existe)
         if (class_exists(VisiteObserver::class)) {
             Visite::observe(VisiteObserver::class);
         }
 
-        Examen::observe(ExamenObserver::class);
+        if (class_exists(ExamenObserver::class)) {
+            Examen::observe(ExamenObserver::class);
+        }
+
+        // — Nouveaux observers (écho / hospit / déclaration / billet)
+        if (class_exists(EchographieObserver::class)) {
+            Echographie::observe(EchographieObserver::class);
+        }
+
+        if (class_exists(HospitalisationObserver::class)) {
+            Hospitalisation::observe(HospitalisationObserver::class);
+        }
+
+        if (class_exists(DeclarationNaissanceObserver::class)) {
+            DeclarationNaissance::observe(DeclarationNaissanceObserver::class);
+        }
+
+        if (class_exists(BilletSortieObserver::class)) {
+            BilletSortie::observe(BilletSortieObserver::class);
+        }
     }
 }
-
-
-

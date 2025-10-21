@@ -10,13 +10,21 @@ return new class extends Migration {
         Schema::create('billets_sortie', function (Blueprint $table) {
             $table->uuid('id')->primary();
 
-            $table->foreignId('patient_id')->constrained()->cascadeOnDelete();
+            // patient (UUID)
+            $table->foreignUuid('patient_id')->constrained('patients')->cascadeOnDelete();
+
+            // service via slug
             $table->string('service_slug')->nullable()->index();
-            $table->foreignUuid('admission_id')->nullable()->constrained('admissions')->nullOnDelete();
+            $table->foreign('service_slug')
+                ->references('slug')->on('services')
+                ->cascadeOnUpdate()->nullOnDelete();
+
+            // reference admission (si module admissions UUID)
+            //$table->foreignUuid('admission_id')->nullable()->constrained('admissions')->nullOnDelete();
 
             // traçabilité
             $table->string('created_via')->nullable(); // service | med | admin
-            $table->foreignUuid('created_by_user_id')->nullable()->constrained('users')->nullOnDelete();
+            $table->foreignId('created_by_user_id')->nullable()->constrained('users')->nullOnDelete();
 
             // contenu clinique
             $table->string('motif_sortie')->nullable();
@@ -27,10 +35,15 @@ return new class extends Migration {
             $table->dateTime('rdv_controle_at')->nullable();
             $table->string('destination')->nullable();
 
-            // métadonnées / workflow
+            // facturation
+            $table->decimal('prix', 10, 2)->nullable();
+            $table->string('devise', 10)->default('XAF');
+            $table->foreignUuid('facture_id')->nullable()->constrained('factures')->nullOnDelete();
+
+            // workflow
             $table->string('statut')->default('brouillon'); // brouillon | valide | remis
             $table->string('remis_a')->nullable();
-            $table->foreignUuid('signature_par')->nullable()->constrained('personnels')->nullOnDelete();
+            //$table->foreignUuid('signature_par')->nullable()->constrained('personnels')->nullOnDelete();
             $table->dateTime('date_signature')->nullable();
             $table->dateTime('date_sortie_effective')->nullable();
 

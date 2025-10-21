@@ -2,103 +2,136 @@
 
 namespace App\Http\Controllers\Api;
 
-use app\Http\Controllers\Controller;
+use App\Http\Controllers\Controller;
 use App\Http\Requests\StoreEchographieRequest;
 use App\Http\Requests\UpdateEchographieRequest;
 use App\Http\Resources\EchographieResource;
 use App\Models\Echographie;
+use App\Models\Service;
 use Illuminate\Http\Request;
+use Illuminate\Support\Facades\DB;
+use Illuminate\Support\Facades\Log;
+use Symfony\Component\HttpFoundation\Response;
 
 class EchographieController extends Controller
 {
-    /**
-     * Liste paginée des échographies
-     */
     public function index(Request $request)
     {
-        $query = Echographie::query()
+        $q = Echographie::query()
             ->with(['patient','service','demandeur','operateur','validateur'])
-            ->latest();
+            ->latest('date_demande');
 
-        // filtrage optionnel (par statut, service, patient, date…)
-        if ($request->filled('statut')) {
-            $query->where('statut', $request->statut);
-        }
-
-        if ($request->filled('service_slug')) {
-            $query->where('service_slug', $request->service_slug);
-        }
-
-        if ($request->filled('patient_id')) {
-            $query->where('patient_id', $request->patient_id);
-        }
+        if ($request->filled('statut'))       $q->where('statut', $request->statut);
+        if ($request->filled('service_slug')) $q->where('service_slug', $request->service_slug);
+        if ($request->filled('patient_id'))   $q->where('patient_id', $request->patient_id);
 
         if ($request->filled('search')) {
-            $search = $request->search;
-            $query->where(function ($q) use ($search) {
-                $q->where('nom_echo', 'like', "%$search%")
-                  ->orWhere('code_echo', 'like', "%$search%")
-                  ->orWhere('indication', 'like', "%$search%");
+            $s = trim($request->search);
+            $q->where(function ($qq) use ($s) {
+                $qq->where('nom_echo', 'like', "%$s%")
+                   ->orWhere('code_echo', 'like', "%$s%")
+                   ->orWhere('indication', 'like', "%$s%");
             });
         }
 
-        $echographies = $query->paginate($request->get('per_page', 20))
-                              ->appends($request->query());
+        $perPage = (int) $request->get('per_page', 20); // ← compatible partout
 
-        return EchographieResource::collection($echographies);
+        return EchographieResource::collection(
+            $q->paginate($perPage)->appends($request->query())
+        );
     }
 
-    /**
-     * Création d'une échographie
-     */
     public function store(StoreEchographieRequest $request)
     {
-        $echographie = Echographie::create($request->validated());
+        Log::info('EchographieController@store hit', ['payload' => $request->all()]);
 
-        $echographie->load(['patient','service','demandeur','operateur','validateur']);
+        $data = $request->validated();
 
-        return (new EchographieResource($echographie))
+        // map 'tarif_code' -> 'code_echo' si fourni
+        if (!isset($data['code_echo']) && $request->filled('tarif_code')) {
+            $data['code_echo'] = strtoupper(trim((string) $request->input('tarif_code')));
+        }
+        // on ne laisse jamais ces champs venir du client
+        unset($data['prix'], $data['devise'], $data['facture_id'], $data['tarif_code']);
+
+        $data['created_by_user_id'] = $request->user()?->id;
+
+        // Retourne le modèle depuis la transaction (pas de référence)
+        $model = DB::transaction(function () use ($data) {
+            $m = Echographie::create($data); // Observer "creating" valide le tarif
+            app(\App\Services\InvoiceService::class)->attachEchographie($m); // crée/attache facture + prix/devise
+            return $m->fresh(); // on renvoie une instance fraîche
+        });
+
+        $model->load(['patient','service','demandeur','operateur','validateur']);
+
+        return (new EchographieResource($model))
             ->response()
-            ->setStatusCode(201);
+            ->setStatusCode(Response::HTTP_CREATED);
     }
 
-    /**
-     * Afficher une échographie donnée
-     */
+    public function storeForService(StoreEchographieRequest $request, Service $service)
+    {
+        Log::info('EchographieController@storeForService hit', [
+            'payload' => $request->all(),
+            'service' => $service->slug
+        ]);
+
+        $data = $request->validated();
+
+        if (!isset($data['code_echo']) && $request->filled('tarif_code')) {
+            $data['code_echo'] = strtoupper(trim((string) $request->input('tarif_code')));
+        }
+        unset($data['prix'], $data['devise'], $data['facture_id'], $data['tarif_code']);
+
+        $data['service_slug']       = $service->slug;
+        $data['created_by_user_id'] = $request->user()?->id;
+
+        $model = DB::transaction(function () use ($data) {
+            $m = Echographie::create($data);
+            app(\App\Services\InvoiceService::class)->attachEchographie($m);
+            return $m->fresh();
+        });
+
+        $model->load(['patient','service','demandeur','operateur','validateur']);
+
+        return (new EchographieResource($model))
+            ->response()
+            ->setStatusCode(Response::HTTP_CREATED);
+    }
+
     public function show(Echographie $echographie)
     {
         $echographie->load(['patient','service','demandeur','operateur','validateur']);
         return new EchographieResource($echographie);
     }
 
-    /**
-     * Mettre à jour une échographie
-     */
     public function update(UpdateEchographieRequest $request, Echographie $echographie)
     {
-        $echographie->fill($request->validated());
-        $echographie->save();
+        $data = $request->validated();
+
+        if (!isset($data['code_echo']) && $request->filled('tarif_code')) {
+            $data['code_echo'] = strtoupper(trim((string) $request->input('tarif_code')));
+        }
+        unset($data['prix'], $data['devise'], $data['facture_id'], $data['tarif_code']);
+
+        $echographie->fill($data)->save();
 
         $echographie->load(['patient','service','demandeur','operateur','validateur']);
         return new EchographieResource($echographie);
     }
 
-    /**
-     * Suppression logique (soft delete)
-     */
     public function destroy(Echographie $echographie)
     {
         $echographie->delete();
-        return response()->json(['message' => 'Echographie supprimée avec succès.']);
+        return response()->json(['message' => 'Echographie supprimée.']);
     }
 
-    /**
-     * Optionnel : restaurer une échographie supprimée
-     */
-    public function restore($id)
+    public function restore(string $id)
     {
-        $echographie = Echographie::withTrashed()->findOrFail($id);
-        $echographie->restore();
-        return new EchographieResource($echographie);
+        $model = Echographie::withTrashed()->findOrFail($id);
+        $model->restore();
+        $model->load(['patient','service','demandeur','operateur','validateur']);
+        return new EchographieResource($model);
     }
 }

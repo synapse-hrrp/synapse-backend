@@ -10,16 +10,27 @@ return new class extends Migration {
         Schema::create('declarations_naissance', function (Blueprint $table) {
             $table->uuid('id')->primary();
 
-            $table->foreignId('patient_id')->constrained()->cascadeOnDelete();
-            $table->foreignId('mere_id')->constrained('patients')->cascadeOnDelete();
-            $table->foreignId('pere_id')->nullable()->constrained('patients')->nullOnDelete();
+            // Mère = patients.id (UUID)
+            $table->foreignUuid('mere_id')->constrained('patients')->cascadeOnDelete();
 
+            // service via slug
             $table->string('service_slug')->nullable()->index();
-            $table->foreignUuid('accouchement_id')->nullable()->constrained('accouchements')->nullOnDelete();
+            $table->foreign('service_slug')
+                ->references('slug')->on('services')
+                ->cascadeOnUpdate()->nullOnDelete();
+
+            // lien accouchement (si table existe)
+            //$table->foreignUuid('accouchement_id')->nullable()->constrained('accouchements')->nullOnDelete();
 
             // traçabilité
             $table->string('created_via')->nullable(); // service | med | admin
-            $table->foreignUuid('created_by_user_id')->nullable()->constrained('users')->nullOnDelete();
+            $table->foreignId('created_by_user_id')->nullable()->constrained('users')->nullOnDelete();
+
+            // données saisies manuellement
+            $table->string('bebe_nom')->nullable();
+            $table->string('bebe_prenom')->nullable();
+            $table->string('pere_nom')->nullable();
+            $table->string('pere_prenom')->nullable();
 
             // données de naissance
             $table->dateTime('date_heure_naissance')->nullable();
@@ -30,10 +41,15 @@ return new class extends Migration {
             $table->unsignedTinyInteger('apgar_1')->nullable();
             $table->unsignedTinyInteger('apgar_5')->nullable();
 
-            // état-civil
+            // état civil & docs
             $table->string('numero_acte')->nullable()->unique();
             $table->string('officier_etat_civil')->nullable();
             $table->json('documents_json')->nullable();
+
+            // facturation
+            $table->decimal('prix', 10, 2)->nullable();
+            $table->string('devise', 10)->default('XAF');
+            $table->foreignUuid('facture_id')->nullable()->constrained('factures')->nullOnDelete();
 
             // workflow
             $table->string('statut')->default('brouillon'); // brouillon | valide | transmis
@@ -42,7 +58,8 @@ return new class extends Migration {
             $table->softDeletes();
             $table->timestamps();
 
-            $table->index(['patient_id','statut']);
+            $table->index(['mere_id','statut']);
+            $table->index('date_heure_naissance');
         });
     }
 

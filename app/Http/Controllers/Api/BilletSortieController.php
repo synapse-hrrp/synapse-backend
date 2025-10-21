@@ -9,6 +9,9 @@ use App\Http\Resources\BilletSortieResource;
 use App\Models\BilletSortie;
 use App\Models\Service;
 use Illuminate\Http\Request;
+use Illuminate\Support\Facades\DB;
+use Illuminate\Support\Facades\Log;
+use Symfony\Component\HttpFoundation\Response;
 
 class BilletSortieController extends Controller
 {
@@ -22,7 +25,7 @@ class BilletSortieController extends Controller
         if ($request->filled('service_slug')) $q->where('service_slug', $request->service_slug);
         if ($request->filled('statut'))       $q->where('statut', $request->statut);
         if ($request->filled('search')) {
-            $s = $request->search;
+            $s = trim($request->search);
             $q->where(function($qq) use ($s) {
                 $qq->where('diagnostic_sortie', 'like', "%$s%")
                    ->orWhere('resume_clinique', 'like', "%$s%")
@@ -30,8 +33,10 @@ class BilletSortieController extends Controller
             });
         }
 
+        $perPage = (int) $request->get('per_page', 20);
+
         return BilletSortieResource::collection(
-            $q->paginate($request->get('per_page', 20))->appends($request->query())
+            $q->paginate($perPage)->appends($request->query())
         );
     }
 
@@ -43,15 +48,22 @@ class BilletSortieController extends Controller
 
     public function store(StoreBilletSortieRequest $request)
     {
+        Log::info('BilletSortieController@store', ['payload' => $request->all()]);
+
         $data = $request->validated();
         $data['created_by_user_id'] = $request->user()?->id;
 
-        $billet = BilletSortie::create($data);
-        $billet->load(['patient','service','signataire']);
+        $model = DB::transaction(function () use ($data) {
+            $m = BilletSortie::create($data);
+            app(\App\Services\InvoiceService::class)->attachBillet($m);
+            return $m->fresh();
+        });
 
-        return (new BilletSortieResource($billet))
+        $model->load(['patient','service','signataire']);
+
+        return (new BilletSortieResource($model))
             ->response()
-            ->setStatusCode(201);
+            ->setStatusCode(Response::HTTP_CREATED);
     }
 
     public function update(UpdateBilletSortieRequest $request, BilletSortie $billet)
@@ -67,7 +79,7 @@ class BilletSortieController extends Controller
         return response()->json(['message' => 'Billet de sortie supprimé.']);
     }
 
-    public function restore($id)
+    public function restore(string $id)
     {
         $billet = BilletSortie::withTrashed()->findOrFail($id);
         $billet->restore();
@@ -75,18 +87,27 @@ class BilletSortieController extends Controller
         return new BilletSortieResource($billet);
     }
 
-    // Création depuis un service (comme pour examens/échographies)
     public function storeForService(StoreBilletSortieRequest $request, Service $service)
     {
+        Log::info('BilletSortieController@storeForService', [
+            'payload' => $request->all(),
+            'service' => $service->slug,
+        ]);
+
         $data = $request->validated();
         $data['service_slug']       = $service->slug;
         $data['created_by_user_id'] = $request->user()?->id;
 
-        $billet = BilletSortie::create($data);
-        $billet->load(['patient','service','signataire']);
+        $model = DB::transaction(function () use ($data) {
+            $m = BilletSortie::create($data);
+            app(\App\Services\InvoiceService::class)->attachBillet($m);
+            return $m->fresh();
+        });
 
-        return (new BilletSortieResource($billet))
+        $model->load(['patient','service','signataire']);
+
+        return (new BilletSortieResource($model))
             ->response()
-            ->setStatusCode(201);
+            ->setStatusCode(Response::HTTP_CREATED);
     }
 }

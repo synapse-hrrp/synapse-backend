@@ -10,19 +10,29 @@ return new class extends Migration {
         Schema::create('hospitalisations', function (Blueprint $table) {
             $table->uuid('id')->primary();
 
-            $table->foreignId('patient_id')->constrained()->cascadeOnDelete();
-            $table->string('service_slug')->nullable()->index();
+            // patient (UUID)
+            $table->foreignUuid('patient_id')->constrained('patients')->cascadeOnDelete();
 
+            // service via slug
+            $table->string('service_slug')->nullable()->index();
+            $table->foreign('service_slug')
+                ->references('slug')->on('services')
+                ->cascadeOnUpdate()->nullOnDelete();
+
+            // admission / traçabilité
             $table->string('admission_no')->nullable()->unique();
             $table->string('created_via')->nullable(); // service | med | admin
-            $table->foreignUuid('created_by_user_id')->nullable()->constrained('users')->nullOnDelete();
+            $table->foreignId('created_by_user_id')->nullable()->constrained('users')->nullOnDelete();
 
             // logistique
             $table->string('unite')->nullable();
             $table->string('chambre')->nullable();
             $table->string('lit')->nullable();
-            $table->unsignedBigInteger('lit_id')->nullable()->index(); // si table "lits" existe
-            $table->foreignUuid('medecin_traitant_id')->nullable()->constrained('personnels')->nullOnDelete();
+            $table->unsignedBigInteger('lit_id')->nullable()->index(); // si table "lits" (BIGINT)
+
+            // ⬇⬇ ICI: personnels.id = BIGINT => foreignId()
+            $table->foreignId('medecin_traitant_id')->nullable()
+                ->constrained('personnels')->nullOnDelete();
 
             // clinique
             $table->text('motif_admission')->nullable();
@@ -38,6 +48,8 @@ return new class extends Migration {
             $table->dateTime('date_sortie_reelle')->nullable();
 
             // facturation
+            $table->decimal('prix', 10, 2)->nullable();
+            $table->string('devise', 10)->default('XAF');
             $table->foreignUuid('facture_id')->nullable()->constrained('factures')->nullOnDelete();
 
             $table->softDeletes();

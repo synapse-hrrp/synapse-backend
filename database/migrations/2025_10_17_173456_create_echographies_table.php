@@ -10,17 +10,26 @@ return new class extends Migration {
         Schema::create('echographies', function (Blueprint $table) {
             $table->uuid('id')->primary();
 
-            $table->foreignId('patient_id')->constrained()->cascadeOnDelete();
+            // patients.id (UUID)
+            $table->foreignUuid('patient_id')->constrained('patients')->cascadeOnDelete();
+
+            // services.slug (string)
             $table->string('service_slug')->nullable()->index();
+            $table->foreign('service_slug')
+                ->references('slug')->on('services')
+                ->cascadeOnUpdate()->nullOnDelete();
+
+            // origine + traçabilité
             $table->string('type_origine')->nullable();            // interne | externe
             $table->string('prescripteur_externe')->nullable();
             $table->string('reference_demande')->nullable();
-
-            // traçabilité
             $table->string('created_via')->nullable();             // labo | service
-            $table->foreignUuid('created_by_user_id')->nullable()->constrained('users')->nullOnDelete();
 
-            // infos écho
+            // users.id (BIGINT)
+            $table->foreignId('created_by_user_id')->nullable()
+                ->constrained('users')->nullOnDelete();
+
+            // informations échographie
             $table->string('code_echo')->nullable()->index();
             $table->string('nom_echo')->nullable();
             $table->text('indication')->nullable();
@@ -33,18 +42,31 @@ return new class extends Migration {
             // facturation
             $table->decimal('prix', 10, 2)->nullable();
             $table->string('devise', 10)->default('XAF');
-            $table->foreignUuid('facture_id')->nullable()->constrained('factures')->nullOnDelete();
+            $table->foreignUuid('facture_id')->nullable()
+                ->constrained('factures')->nullOnDelete();
 
-            // workflow
-            $table->foreignUuid('demande_par')->nullable()->constrained('personnels')->nullOnDelete();
+            // === workflow (personnels.id est BIGINT → foreignId) ===
+            $table->foreignId('demande_par')->nullable()
+                ->constrained('personnels')->nullOnDelete();
+
             $table->dateTime('date_demande')->nullable();
-            $table->foreignUuid('realise_par')->nullable()->constrained('personnels')->nullOnDelete();
+
+            $table->foreignId('realise_par')->nullable()
+                ->constrained('personnels')->nullOnDelete();
+
             $table->dateTime('date_realisation')->nullable();
-            $table->foreignUuid('valide_par')->nullable()->constrained('personnels')->nullOnDelete();
+
+            $table->foreignId('valide_par')->nullable()
+                ->constrained('personnels')->nullOnDelete();
+
             $table->dateTime('date_validation')->nullable();
 
             $table->softDeletes();
             $table->timestamps();
+
+            // index utiles
+            $table->index(['patient_id','statut']);
+            $table->index('date_demande');
         });
     }
 

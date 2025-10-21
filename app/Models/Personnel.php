@@ -6,6 +6,7 @@ use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\Factories\HasFactory;
 use Illuminate\Database\Eloquent\SoftDeletes;
 use Illuminate\Support\Facades\Storage;
+use Illuminate\Support\Str;
 
 class Personnel extends Model
 {
@@ -37,6 +38,33 @@ class Personnel extends Model
     ];
 
     protected $appends = ['full_name', 'avatar_url'];
+
+    // ── Hooks (auto-matricule) ─────────────────────────────────────────────
+
+    protected static function booted(): void
+    {
+        // Génère un matricule si absent lors de la création
+        static::creating(function (self $p) {
+            if (empty($p->matricule)) {
+                $p->matricule = self::generateUniqueMatricule();
+            }
+        });
+
+        // Ne pas toucher au matricule à l'update (rien à faire ici)
+    }
+
+    /**
+     * Génère un matricule unique de type PER-XXXXXXXX (A–Z, 0–9).
+     * withTrashed() pour éviter les collisions avec SoftDeletes.
+     */
+    protected static function generateUniqueMatricule(): string
+    {
+        do {
+            $m = 'PER-'.Str::upper(Str::random(8));
+        } while (self::withTrashed()->where('matricule', $m)->exists());
+
+        return $m;
+    }
 
     // ── Relations ──────────────────────────────────────────────────────────
 
@@ -87,7 +115,7 @@ class Personnel extends Model
 
     public function getAvatarUrlAttribute(): ?string
     {
-        if (! $this->avatar_path) return null;
+        if (!$this->avatar_path) return null;
         return Storage::disk('public')->url($this->avatar_path);
     }
 }

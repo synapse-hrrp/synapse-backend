@@ -9,6 +9,9 @@ use App\Http\Resources\HospitalisationResource;
 use App\Models\Hospitalisation;
 use App\Models\Service;
 use Illuminate\Http\Request;
+use Illuminate\Support\Facades\DB;
+use Illuminate\Support\Facades\Log;
+use Symfony\Component\HttpFoundation\Response;
 
 class HospitalisationController extends Controller
 {
@@ -18,14 +21,13 @@ class HospitalisationController extends Controller
             ->with(['patient','service','medecinTraitant'])
             ->latest('date_admission');
 
-        // filtres
         if ($request->filled('patient_id'))   $q->where('patient_id', $request->patient_id);
         if ($request->filled('service_slug')) $q->where('service_slug', $request->service_slug);
         if ($request->filled('statut'))       $q->where('statut', $request->statut);
         if ($request->filled('from'))         $q->whereDate('date_admission', '>=', $request->from);
         if ($request->filled('to'))           $q->whereDate('date_admission', '<=', $request->to);
         if ($request->filled('search')) {
-            $s = $request->search;
+            $s = trim($request->search);
             $q->where(function($qq) use ($s) {
                 $qq->where('admission_no', 'like', "%$s%")
                    ->orWhere('motif_admission', 'like', "%$s%")
@@ -34,8 +36,10 @@ class HospitalisationController extends Controller
             });
         }
 
+        $perPage = (int) $request->get('per_page', 20);
+
         return HospitalisationResource::collection(
-            $q->paginate($request->get('per_page', 20))->appends($request->query())
+            $q->paginate($perPage)->appends($request->query())
         );
     }
 
@@ -47,15 +51,22 @@ class HospitalisationController extends Controller
 
     public function store(StoreHospitalisationRequest $request)
     {
+        Log::info('HospitalisationController@store', ['payload' => $request->all()]);
+
         $data = $request->validated();
         $data['created_by_user_id'] = $request->user()?->id;
 
-        $hosp = Hospitalisation::create($data);
-        $hosp->load(['patient','service','medecinTraitant']);
+        $model = DB::transaction(function () use ($data) {
+            $m = Hospitalisation::create($data);
+            app(\App\Services\InvoiceService::class)->attachHospitalisation($m);
+            return $m->fresh();
+        });
 
-        return (new HospitalisationResource($hosp))
+        $model->load(['patient','service','medecinTraitant']);
+
+        return (new HospitalisationResource($model))
             ->response()
-            ->setStatusCode(201);
+            ->setStatusCode(Response::HTTP_CREATED);
     }
 
     public function update(UpdateHospitalisationRequest $request, Hospitalisation $hospitalisation)
@@ -71,7 +82,7 @@ class HospitalisationController extends Controller
         return response()->json(['message' => 'Hospitalisation supprimée.']);
     }
 
-    public function restore($id)
+    public function restore(string $id)
     {
         $hosp = Hospitalisation::withTrashed()->findOrFail($id);
         $hosp->restore();
@@ -79,18 +90,27 @@ class HospitalisationController extends Controller
         return new HospitalisationResource($hosp);
     }
 
-    // création “depuis un service”
     public function storeForService(StoreHospitalisationRequest $request, Service $service)
     {
+        Log::info('HospitalisationController@storeForService', [
+            'payload' => $request->all(),
+            'service' => $service->slug,
+        ]);
+
         $data = $request->validated();
         $data['service_slug']       = $service->slug;
         $data['created_by_user_id'] = $request->user()?->id;
 
-        $hosp = Hospitalisation::create($data);
-        $hosp->load(['patient','service','medecinTraitant']);
+        $model = DB::transaction(function () use ($data) {
+            $m = Hospitalisation::create($data);
+            app(\App\Services\InvoiceService::class)->attachHospitalisation($m);
+            return $m->fresh();
+        });
 
-        return (new HospitalisationResource($hosp))
+        $model->load(['patient','service','medecinTraitant']);
+
+        return (new HospitalisationResource($model))
             ->response()
-            ->setStatusCode(201);
+            ->setStatusCode(Response::HTTP_CREATED);
     }
 }

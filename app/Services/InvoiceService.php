@@ -2,77 +2,325 @@
 
 namespace App\Services;
 
-use App\Models\{Facture, Examen, Tarif};
+use App\Models\{
+    Facture,
+    FactureLigne,
+    Examen,
+    Echographie,
+    Hospitalisation,
+    DeclarationNaissance,
+    BilletSortie,
+    Tarif
+};
 use Illuminate\Support\Facades\DB;
+use Illuminate\Validation\ValidationException;
 
 class InvoiceService
 {
+    /* =======================================================================
+     |                              TARIFS
+     |=======================================================================*/
+
     /**
-     * Crée une NOUVELLE facture pour chaque examen, ajoute 1 ligne,
-     * lie l'examen à cette facture, puis recalcule les totaux.
+     * Trouve un tarif actif par code (+ service si fourni), avec fallback global.
+     */
+    public function findActiveTarif(?string $serviceSlug, string $code): ?Tarif
+    {
+        $code = strtoupper(trim($code));
+
+        $q = Tarif::query()->actifs();
+
+        if ($serviceSlug) {
+            $t = (clone $q)->forService($serviceSlug)->byCode($code)->latest('created_at')->first();
+            if ($t) return $t;
+        }
+
+        return $q->byCode($code)->latest('created_at')->first();
+    }
+
+    /* =======================================================================
+     |                         FACTURES – OUVERTURE
+     |=======================================================================*/
+
+    /**
+     * Récupère une facture "ouverte" pour le patient et la devise (IMPAYEE/DRAFT),
+     * sinon en crée une nouvelle. On sépare par devise pour éviter de mélanger.
+     */
+    public function getOrCreateOpenInvoice(string $patientId, ?string $devise = 'XAF'): Facture
+    {
+        $devise = strtoupper(trim((string)($devise ?: 'XAF')));
+
+        $open = Facture::query()
+            ->where('patient_id', $patientId)
+            ->whereIn('statut', ['IMPAYEE','DRAFT'])
+            ->where('devise', $devise)
+            ->latest()
+            ->first();
+
+        if ($open) {
+            return $open;
+        }
+
+        return Facture::create([
+            'patient_id'    => $patientId,
+            'montant_total' => 0,
+            'montant_du'    => 0,
+            'devise'        => $devise,
+            'statut'        => 'IMPAYEE',
+        ]);
+    }
+
+    /**
+     * Recalcule simple (somme des lignes) si ton modèle n’a pas recalc().
+     */
+    public function recalcInvoice(Facture $facture): void
+    {
+        if (method_exists($facture, 'recalc')) {
+            $facture->recalc();
+            return;
+        }
+
+        $sum = (float) $facture->lignes()->sum('montant');
+        $facture->update([
+            'montant_total' => $sum,
+            'montant_du'    => $sum,
+        ]);
+    }
+
+    /**
+     * Ajoute une ligne via la méthode métier si dispo, sinon via la relation.
+     * $payload attendu : designation, quantite, prix_unitaire, [montant], [tarif_id]
+     */
+    protected function addLine(Facture $facture, array $payload): FactureLigne
+    {
+        $payload['designation']   = trim((string)($payload['designation'] ?? ''));
+        $payload['quantite']      = (int)   ($payload['quantite']      ?? 1);
+        $payload['prix_unitaire'] = (float) ($payload['prix_unitaire'] ?? 0);
+        $payload['montant']       = array_key_exists('montant', $payload)
+            ? (float) $payload['montant']
+            : (float) ($payload['quantite'] * $payload['prix_unitaire']);
+
+        if (method_exists($facture, 'ajouterLigne')) {
+            $ligne = $facture->ajouterLigne($payload); // doit recalculer si ton modèle le fait
+            // en cas de modèle n’ayant pas recalc() dans ajouterLigne:
+            if (method_exists($facture, 'recalc')) {
+                $facture->recalc();
+            }
+            return $ligne;
+        }
+
+        /** @var FactureLigne $ligne */
+        $ligne = $facture->lignes()->create($payload);
+        $this->recalcInvoice($facture);
+
+        return $ligne;
+    }
+
+    /* =======================================================================
+     |                             ATTACH – EXAMEN
+     |=======================================================================*/
+
+    /**
+     * Comportement existant : crée UNE facture par examen (pas de réutilisation).
      */
     public function attachExam(Examen $examen): Facture
     {
         return DB::transaction(function () use ($examen) {
 
-            // 1) Créer systématiquement une nouvelle facture (pas de réutilisation)
             $facture = Facture::create([
-                // id / numero / statut / devise gérés en partie par le modèle (booted)
                 'patient_id'    => $examen->patient_id,
-                'devise'        => $examen->devise ?? 'XAF',
+                'devise'        => strtoupper(trim($examen->devise ?? 'XAF')),
                 'montant_total' => 0,
                 'montant_du'    => 0,
-                // 'visite_id' => null // tu n'utilises pas la visite ici
+                'statut'        => 'IMPAYEE',
             ]);
 
-            // 2) Optionnel : retrouver le tarif utilisé (pour tracer dans la ligne)
+            // Cherche le tarif uniquement pour tracer l’id
             $tarifId = null;
             if ($examen->code_examen) {
                 $tarifQ = Tarif::query()->actifs()->byCode($examen->code_examen);
-                if ($examen->service_slug) {
-                    $tarifQ->forService($examen->service_slug);
-                }
+                if ($examen->service_slug) $tarifQ->forService($examen->service_slug);
                 if ($tarif = $tarifQ->latest('created_at')->first()) {
                     $tarifId = $tarif->id;
                 }
             }
 
-            // 3) Ajouter la ligne issue de l'examen
-            $facture->ajouterLigne([
-                'designation'   => $examen->nom_examen ?? $examen->code_examen ?? 'Examen',
+            $this->addLine($facture, [
+                'designation'   => $examen->nom_examen ?: ($examen->code_examen ?: 'Examen'),
                 'quantite'      => 1,
                 'prix_unitaire' => (float) ($examen->prix ?? 0),
                 'tarif_id'      => $tarifId,
             ]);
-            // ->ajouterLigne() appelle déjà $facture->recalc()
 
-            // 4) Lier l'examen à la facture créée
             $examen->forceFill(['facture_id' => $facture->getKey()])->saveQuietly();
 
-            // 5) Retourner la facture avec ses lignes/règlements
             return $facture->fresh(['lignes','reglements']);
         });
     }
 
+    /* =======================================================================
+     |                          ATTACH – ECHOGRAPHIE
+     |=======================================================================*/
 
-
-    public function openNewForPatient(string $patientId, string $devise = 'XAF'): \App\Models\Facture
+    /**
+     * Échographie : exige un code tarif (code_echo), récupère le tarif,
+     * ouvre/choisit une facture dans la même devise, ajoute la ligne
+     * et met à jour l’écho (prix, devise, facture_id).
+     */
+    public function attachEchographie(Echographie $echo): Facture
     {
-        return \App\Models\Facture::create([
+        return DB::transaction(function () use ($echo) {
+
+            $code = $echo->code_echo ? strtoupper(trim($echo->code_echo)) : '';
+            if (!$code) {
+                throw ValidationException::withMessages(['tarif_code' => 'Code tarif écho manquant.']);
+            }
+
+            $tarif = $this->findActiveTarif($echo->service_slug, $code);
+            if (!$tarif) {
+                throw ValidationException::withMessages(['tarif' => "Tarif introuvable pour code '{$code}'"]);
+            }
+
+            $devise = strtoupper(trim($tarif->devise ?? 'XAF'));
+            $facture = $this->getOrCreateOpenInvoice($echo->patient_id, $devise);
+
+            $this->addLine($facture, [
+                'tarif_id'      => $tarif->id,
+                'designation'   => $echo->nom_echo ?: ($tarif->libelle ?: $tarif->code),
+                'quantite'      => 1,
+                'prix_unitaire' => (float) $tarif->montant,
+            ]);
+
+            $echo->forceFill([
+                'prix'       => (float) $tarif->montant,
+                'devise'     => $devise,
+                'facture_id' => $facture->getKey(),
+            ])->saveQuietly();
+
+            return $facture->fresh(['lignes','reglements']);
+        });
+    }
+
+    /* =======================================================================
+     |                       ATTACH – HOSPITALISATION
+     |=======================================================================*/
+
+    public function attachHospitalisation(Hospitalisation $hosp): Facture
+    {
+        return DB::transaction(function () use ($hosp) {
+            $code  = 'HOSP_ADM';
+            $tarif = $this->findActiveTarif($hosp->service_slug, $code);
+
+            if (!$tarif) {
+                throw ValidationException::withMessages([
+                    'tarif' => "Tarif introuvable pour hospitalisation (code {$code})."
+                ]);
+            }
+
+            $devise  = strtoupper(trim($tarif->devise ?? 'XAF'));
+            $facture = $this->getOrCreateOpenInvoice($hosp->patient_id, $devise);
+
+            $this->addLine($facture, [
+                'tarif_id'      => $tarif->id,
+                'designation'   => $tarif->libelle ?: 'Admission / Hospitalisation',
+                'quantite'      => 1,
+                'prix_unitaire' => (float) $tarif->montant,
+            ]);
+
+            $hosp->updateQuietly(['facture_id' => $facture->getKey()]);
+
+            return $facture->fresh(['lignes','reglements']);
+        });
+    }
+
+    /* =======================================================================
+     |                    ATTACH – DÉCLARATION DE NAISSANCE
+     |=======================================================================*/
+
+    /**
+     * Facture au nom de la mère (mere_id). Code par défaut DECL_NAIS.
+     */
+    public function attachDeclaration(DeclarationNaissance $decl): Facture
+    {
+        return DB::transaction(function () use ($decl) {
+            $code  = 'DECL_NAIS';
+            $tarif = $this->findActiveTarif($decl->service_slug, $code);
+
+            if (!$tarif) {
+                throw ValidationException::withMessages([
+                    'tarif' => "Tarif introuvable pour déclaration de naissance (code {$code})."
+                ]);
+            }
+
+            $devise    = strtoupper(trim($tarif->devise ?? 'XAF'));
+            $patientId = $decl->mere_id; // facture pour la mère
+            $facture   = $this->getOrCreateOpenInvoice($patientId, $devise);
+
+            $designation = trim("Déclaration de naissance: " .
+                trim($decl->bebe_nom . ' ' . ($decl->bebe_prenom ?? ''))
+            );
+
+            $this->addLine($facture, [
+                'tarif_id'      => $tarif->id,
+                'designation'   => $designation ?: ($tarif->libelle ?: 'Déclaration de naissance'),
+                'quantite'      => 1,
+                'prix_unitaire' => (float) $tarif->montant,
+            ]);
+
+            return $facture->fresh(['lignes','reglements']);
+        });
+    }
+
+    /* =======================================================================
+     |                         ATTACH – BILLET DE SORTIE
+     |=======================================================================*/
+
+    public function attachBillet(BilletSortie $billet): Facture
+    {
+        return DB::transaction(function () use ($billet) {
+            $code  = 'BIL_SORTIE';
+            $tarif = $this->findActiveTarif($billet->service_slug, $code);
+
+            if (!$tarif) {
+                throw ValidationException::withMessages([
+                    'tarif' => "Tarif introuvable pour billet de sortie (code {$code})."
+                ]);
+            }
+
+            $devise  = strtoupper(trim($tarif->devise ?? 'XAF'));
+            $facture = $this->getOrCreateOpenInvoice($billet->patient_id, $devise);
+
+            $this->addLine($facture, [
+                'tarif_id'      => $tarif->id,
+                'designation'   => $tarif->libelle ?: 'Billet de sortie',
+                'quantite'      => 1,
+                'prix_unitaire' => (float) $tarif->montant,
+            ]);
+
+            // si tu ajoutes plus tard une colonne facture_id sur billets_sortie :
+            // $billet->updateQuietly(['facture_id' => $facture->getKey()]);
+
+            return $facture->fresh(['lignes','reglements']);
+        });
+    }
+
+    /* =======================================================================
+     |                       Helpers d'ouverture directe
+     |=======================================================================*/
+
+    public function openNewForPatient(string $patientId, string $devise = 'XAF'): Facture
+    {
+        return Facture::create([
             'patient_id'    => $patientId,
-            'devise'        => $devise,
+            'devise'        => strtoupper(trim($devise ?: 'XAF')),
             'montant_total' => 0,
             'montant_du'    => 0,
             'statut'        => 'IMPAYEE',
         ]);
     }
 
-    public static function openNewForPatientStatic(string $patientId, string $devise = 'XAF'): \App\Models\Facture
+    public static function openNewForPatientStatic(string $patientId, string $devise = 'XAF'): Facture
     {
         return app(self::class)->openNewForPatient($patientId, $devise);
     }
-
-
-
-
 }
