@@ -32,7 +32,7 @@ class User extends Authenticatable
     {
         return [
             'email_verified_at' => 'datetime',
-            'password'          => 'hashed',   // garde ça pour hasher auto
+            'password'          => 'hashed',
             'last_login_at'     => 'datetime',
             'is_active'         => 'boolean',
         ];
@@ -68,6 +68,12 @@ class User extends Authenticatable
 
     public function personnel()
     {
-        return $this->hasOne(\App\Models\Personnel::class);
+        return $this->hasOne(Personnel::class);
+    }
+
+    /** Indique si l'utilisateur est lié à un médecin. */
+    public function isMedecin(): bool
+    {
+        return (bool) optional($this->personnel)->medecin;
     }
 }

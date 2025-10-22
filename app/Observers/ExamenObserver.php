@@ -1,6 +1,5 @@
 <?php
 
-// app/Observers/ExamenObserver.php
 namespace App\Observers;
 
 use App\Models\Examen;
@@ -27,6 +26,6 @@ class ExamenObserver
         }
 
         // Facturation automatique (si service actif)
-       // app(\App\Services\InvoiceService::class)->attachExam($examen);
+       app(\App\Services\InvoiceService::class)->attachExam($examen);
     }
 }

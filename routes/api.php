@@ -14,6 +14,7 @@ use App\Http\Controllers\Api\ExamenController;
 
 use App\Http\Controllers\Api\ConsultationController;
 use App\Http\Controllers\Api\PatientController;
+use App\Http\Controllers\Api\MedecinController;
 use App\Http\Controllers\Api\VisiteController;
 use App\Http\Controllers\Api\LaboratoireController;
 use App\Http\Controllers\Api\PansementController;
@@ -22,6 +23,11 @@ use App\Http\Controllers\Api\PansementController;
 use App\Http\Controllers\Api\FactureController;
 use App\Http\Controllers\Api\FactureLigneController;
 use App\Http\Controllers\Api\ReglementController;
+use App\Http\Controllers\Api\FactureItemController;
+// ── Controller Tarif ──────────────────────────────────────────────────────
+use App\Http\Controllers\Api\TarifController;
+
+
 
 // Finance “module” (invoices / payments)
 use App\Http\Controllers\Api\Finance\InvoiceController;
@@ -37,6 +43,13 @@ use App\Http\Controllers\Api\KinesitherapieController;
 use App\Http\Controllers\Api\AruController;
 use App\Http\Controllers\Api\BlocOperatoireController;
 use App\Http\Controllers\Api\MedecineController;
+use App\Http\Controllers\Api\EchographieController;
+use App\Http\Controllers\Api\BilletSortieController;
+use App\Http\Controllers\Api\DeclarationNaissanceController;
+use App\Http\Controllers\Api\HospitalisationController;
+
+
+
 
 // AJOUT INVENTAIRE LABO
 use App\Http\Controllers\Api\ReagentController;
@@ -686,6 +699,253 @@ Route::prefix('v1')->group(function () {
             ->whereNumber('location')
             ->name('v1.inventory.locations.destroy');
     });
+
+
+    // ── Reports inventaire (réassort & péremptions) ───────────────────────────
+    Route::prefix('inventory')->middleware(['auth:sanctum','throttle:auth'])->group(function () {
+
+        // Réactifs sous le point de commande (reorder)
+        // GET /api/v1/inventory/reports/reorders
+        Route::get('reports/reorders', [ReportController::class, 'reorders'])
+            ->middleware('ability:inventory.view')
+            ->name('v1.inventory.reports.reorders');
+
+        // Lots qui expirent sous N jours (par défaut 30)
+        // GET /api/v1/inventory/reports/expiries?days=30
+        Route::get('reports/expiries', [ReportController::class, 'expiries'])
+            ->middleware('ability:inventory.view')
+            ->name('v1.inventory.reports.expiries');
+    });
+
+    
+
+    // ── Caisse centrale : Facture Items (/api/v1/facture-items) ───────────────
+    Route::middleware(['auth:sanctum','throttle:auth'])->group(function () {
+        // Créer un item (crée une nouvelle facture si facture_id omis)
+        Route::post('facture-items', [FactureItemController::class, 'store'])
+            ->middleware('ability:cashier.item.create')
+            ->name('v1.facture_items.store');
+
+        // Mettre à jour un item
+        Route::patch('facture-items/{facture_item}', [FactureItemController::class, 'update'])
+            ->middleware('ability:cashier.item.update')
+            ->name('v1.facture_items.update');
+
+        // Supprimer un item
+        Route::delete('facture-items/{facture_item}', [FactureItemController::class, 'destroy'])
+            ->middleware('ability:cashier.item.delete')
+            ->name('v1.facture_items.destroy');
+
+        // (Optionnel) Lister / Voir un item
+        // Route::get('facture-items', [FactureItemController::class, 'index'])
+        //     ->middleware('ability:cashier.item.view')
+        //     ->name('v1.facture_items.index');
+
+        // Route::get('facture-items/{facture_item}', [FactureItemController::class, 'show'])
+        //     ->middleware('ability:cashier.item.view')
+        //     ->name('v1.facture_items.show');
+    });
+
+
+    // ── Tarifs (/api/v1/tarifs) ───────────────────────────────────────────
+    Route::middleware(['auth:sanctum','throttle:auth'])->group(function () {
+
+        Route::get('tarifs', [TarifController::class, 'index'])
+            ->name('v1.tarifs.index');
+
+        Route::get('tarifs/actifs', [TarifController::class, 'actifs'])
+            ->name('v1.tarifs.actifs');
+
+        Route::get('tarifs/by-code/{code}', [TarifController::class, 'byCode'])
+            ->name('v1.tarifs.by_code');
+
+        Route::get('tarifs/{tarif}', [TarifController::class, 'show'])
+            ->whereUuid('tarif')
+            ->name('v1.tarifs.show');
+
+        Route::post('tarifs', [TarifController::class, 'store'])
+            ->name('v1.tarifs.store');
+
+        Route::match(['put','patch'], 'tarifs/{tarif}', [TarifController::class, 'update'])
+            ->whereUuid('tarif')
+            ->name('v1.tarifs.update');
+
+        Route::delete('tarifs/{tarif}', [TarifController::class, 'destroy'])
+            ->whereUuid('tarif')
+            ->name('v1.tarifs.destroy');
+
+        Route::patch('tarifs/{tarif}/toggle', [TarifController::class, 'toggle'])
+            ->whereUuid('tarif')
+            ->name('v1.tarifs.toggle');
+    });
+
+
+
+    // ── Médecins (/api/v1/medecins) ───────────────────────────────────────────
+    Route::middleware(['auth:sanctum','throttle:auth'])->group(function () {
+        // Liste + création + lecture + maj + suppression
+        Route::get(   'medecins',             [MedecinController::class, 'index'])
+            ->middleware('ability:medecins.view')->name('v1.medecins.index');
+
+        Route::post(  'medecins',             [MedecinController::class, 'store'])
+            ->middleware('ability:medecins.create')->name('v1.medecins.store');
+
+        Route::get(   'medecins/{medecin}',   [MedecinController::class, 'show'])
+            ->middleware('ability:medecins.view')->name('v1.medecins.show');
+
+        Route::patch( 'medecins/{medecin}',   [MedecinController::class, 'update'])
+            ->middleware('ability:medecins.update')->name('v1.medecins.update');
+
+        Route::put(   'medecins/{medecin}',   [MedecinController::class, 'update'])
+            ->middleware('ability:medecins.update');
+
+        Route::delete('medecins/{medecin}',   [MedecinController::class, 'destroy'])
+            ->middleware('ability:medecins.delete')->name('v1.medecins.destroy');
+
+        // Corbeille (si SoftDeletes activé sur Medecin)
+        Route::get(   'medecins-corbeille',   [MedecinController::class, 'trash'])
+            ->middleware('ability:medecins.view')->name('v1.medecins.trash');
+
+        Route::post(  'medecins/{id}/restore',[MedecinController::class, 'restore'])
+            ->middleware('ability:medecins.update')->whereNumber('id')->name('v1.medecins.restore');
+
+        Route::delete('medecins/{id}/force',  [MedecinController::class, 'forceDestroy'])
+            ->middleware('ability:medecins.delete')->whereNumber('id')->name('v1.medecins.force');
+
+        // Utilitaires pratiques
+        // Récupérer le médecin à partir d'un personnel
+        Route::get('medecins/by-personnel/{personnel}', [MedecinController::class, 'byPersonnel'])
+            ->middleware('ability:medecins.view')->whereNumber('personnel')->name('v1.medecins.by_personnel');
+
+        // Le médecin du user connecté (si existant)
+        Route::get('me/medecin', [MedecinController::class, 'me'])
+            ->middleware('ability:medecins.view')->name('v1.me.medecin');
+    });
+
+
+    // ── Echographies (/api/v1/echographies) ───────────────────────────────────
+    Route::middleware(['auth:sanctum','throttle:auth'])->group(function () {
+        Route::get(   'echographies',               [EchographieController::class, 'index'])
+            ->middleware('ability:echographies.view')->name('v1.echographies.index');
+
+        Route::post(  'echographies',               [EchographieController::class, 'store'])
+            ->middleware('ability:echographies.create')->name('v1.echographies.store');
+
+        Route::get(   'echographies/{echographie}', [EchographieController::class, 'show'])
+            ->middleware('ability:echographies.view')->name('v1.echographies.show');
+
+        Route::patch( 'echographies/{echographie}', [EchographieController::class, 'update'])
+            ->middleware('ability:echographies.update')->name('v1.echographies.update');
+
+        Route::put(   'echographies/{echographie}', [EchographieController::class, 'update'])
+            ->middleware('ability:echographies.update');
+
+        Route::delete('echographies/{echographie}', [EchographieController::class, 'destroy'])
+            ->middleware('ability:echographies.delete')->name('v1.echographies.destroy');
+
+        // restaurer (soft delete)
+        Route::post('echographies/{id}/restore', [EchographieController::class, 'restore'])
+            ->middleware('ability:echographies.update')->name('v1.echographies.restore');
+
+        // Créer une écho "depuis un service"
+        Route::post('services/{service}/echographies', [EchographieController::class, 'storeForService'])
+            ->middleware('ability:echographies.create')->name('v1.services.echographies.store');
+    });
+
+
+
+
+    // ── Billets de sortie (/api/v1/billets-sortie) ─────────────────────────────
+    Route::middleware(['auth:sanctum','throttle:auth'])->group(function () {
+        Route::get(   'billets-sortie',                 [BilletSortieController::class, 'index'])
+            ->middleware('ability:billets_sortie.view')->name('v1.billets_sortie.index');
+
+        Route::post(  'billets-sortie',                 [BilletSortieController::class, 'store'])
+            ->middleware('ability:billets_sortie.create')->name('v1.billets_sortie.store');
+
+        Route::get(   'billets-sortie/{billet}',        [BilletSortieController::class, 'show'])
+            ->middleware('ability:billets_sortie.view')->name('v1.billets_sortie.show');
+
+        Route::patch( 'billets-sortie/{billet}',        [BilletSortieController::class, 'update'])
+            ->middleware('ability:billets_sortie.update')->name('v1.billets_sortie.update');
+
+        Route::put(   'billets-sortie/{billet}',        [BilletSortieController::class, 'update'])
+            ->middleware('ability:billets_sortie.update');
+
+        Route::delete('billets-sortie/{billet}',        [BilletSortieController::class, 'destroy'])
+            ->middleware('ability:billets_sortie.delete')->name('v1.billets_sortie.destroy');
+
+        // restauration
+        Route::post(  'billets-sortie/{id}/restore',    [BilletSortieController::class, 'restore'])
+            ->middleware('ability:billets_sortie.update')->name('v1.billets_sortie.restore');
+
+        // création depuis un service
+        Route::post('services/{service}/billets-sortie',[BilletSortieController::class, 'storeForService'])
+            ->middleware('ability:billets_sortie.create')->name('v1.services.billets_sortie.store');
+    });
+
+
+
+    // ── Déclarations de naissance (/api/v1/declarations-naissance) ────────────
+    Route::middleware(['auth:sanctum','throttle:auth'])->group(function () {
+        Route::get(   'declarations-naissance',                   [DeclarationNaissanceController::class, 'index'])
+            ->middleware('ability:declarations_naissance.view')->name('v1.declarations_naissance.index');
+
+        Route::post(  'declarations-naissance',                   [DeclarationNaissanceController::class, 'store'])
+            ->middleware('ability:declarations_naissance.create')->name('v1.declarations_naissance.store');
+
+        Route::get(   'declarations-naissance/{declaration}',     [DeclarationNaissanceController::class, 'show'])
+            ->middleware('ability:declarations_naissance.view')->name('v1.declarations_naissance.show');
+
+        Route::patch( 'declarations-naissance/{declaration}',     [DeclarationNaissanceController::class, 'update'])
+            ->middleware('ability:declarations_naissance.update')->name('v1.declarations_naissance.update');
+
+        Route::put(   'declarations-naissance/{declaration}',     [DeclarationNaissanceController::class, 'update'])
+            ->middleware('ability:declarations_naissance.update');
+
+        Route::delete('declarations-naissance/{declaration}',     [DeclarationNaissanceController::class, 'destroy'])
+            ->middleware('ability:declarations_naissance.delete')->name('v1.declarations_naissance.destroy');
+
+        // restauration
+        Route::post(  'declarations-naissance/{id}/restore',      [DeclarationNaissanceController::class, 'restore'])
+            ->middleware('ability:declarations_naissance.update')->name('v1.declarations_naissance.restore');
+
+        // création depuis un service
+        Route::post('services/{service}/declarations-naissance',  [DeclarationNaissanceController::class, 'storeForService'])
+            ->middleware('ability:declarations_naissance.create')->name('v1.services.declarations_naissance.store');
+    });
+
+
+
+    // ── Hospitalisations (/api/v1/hospitalisations) ───────────────────────────
+    Route::middleware(['auth:sanctum','throttle:auth'])->group(function () {
+        Route::get(   'hospitalisations',                    [HospitalisationController::class, 'index'])
+            ->middleware('ability:hospitalisations.view')->name('v1.hospitalisations.index');
+
+        Route::post(  'hospitalisations',                    [HospitalisationController::class, 'store'])
+            ->middleware('ability:hospitalisations.create')->name('v1.hospitalisations.store');
+
+        Route::get(   'hospitalisations/{hospitalisation}',  [HospitalisationController::class, 'show'])
+            ->middleware('ability:hospitalisations.view')->name('v1.hospitalisations.show');
+
+        Route::patch( 'hospitalisations/{hospitalisation}',  [HospitalisationController::class, 'update'])
+            ->middleware('ability:hospitalisations.update')->name('v1.hospitalisations.update');
+
+        Route::put(   'hospitalisations/{hospitalisation}',  [HospitalisationController::class, 'update'])
+            ->middleware('ability:hospitalisations.update');
+
+        Route::delete('hospitalisations/{hospitalisation}',  [HospitalisationController::class, 'destroy'])
+            ->middleware('ability:hospitalisations.delete')->name('v1.hospitalisations.destroy');
+
+        // restauration
+        Route::post(  'hospitalisations/{id}/restore',       [HospitalisationController::class, 'restore'])
+            ->middleware('ability:hospitalisations.update')->name('v1.hospitalisations.restore');
+
+        // création depuis un service
+        Route::post('services/{service}/hospitalisations',   [HospitalisationController::class, 'storeForService'])
+            ->middleware('ability:hospitalisations.create')->name('v1.services.hospitalisations.store');
+    });
+
 
 
 

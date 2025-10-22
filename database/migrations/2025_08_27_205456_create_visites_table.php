@@ -5,55 +5,74 @@ use Illuminate\Database\Schema\Blueprint;
 use Illuminate\Support\Facades\Schema;
 
 return new class extends Migration {
-    public function up(): void {
+    public function up(): void
+    {
         Schema::create('visites', function (Blueprint $table) {
             $table->uuid('id')->primary();
 
-            // FK patients (UUID)
+            // 🔗 Patient (UUID)
             $table->foreignUuid('patient_id')
                   ->constrained('patients')
                   ->cascadeOnDelete();
 
-            // FK services (BIGINT UNSIGNED)
+            // 🔗 Service (BIGINT UNSIGNED)
             $table->foreignId('service_id')
                   ->constrained('services')
                   ->cascadeOnUpdate()
                   ->restrictOnDelete();
 
-            // FK users (BIGINT UNSIGNED)
-            $table->foreignId('medecin_id')
-                  ->nullable()
+            // 🔗 Médecin (User)
+            $table->foreignId('medecin_id')->nullable()
                   ->constrained('users')
                   ->nullOnDelete();
 
-            $table->foreignId('agent_id')
+            // 🔗 Agent (User)
+            $table->foreignId('agent_id')->nullable()
                   ->constrained('users')
-                  ->cascadeOnDelete();
+                  ->nullOnDelete();
 
-            // Infos redondantes (snapshots)
+            // Noms instantanés (snapshots)
             $table->string('medecin_nom', 150)->nullable();
-            $table->string('agent_nom', 150);
+            $table->string('agent_nom', 150)->nullable();
 
-            $table->timestamp('heure_arrivee')->useCurrent();
+            // Horodatage d'arrivée
+            $table->timestamp('heure_arrivee')->nullable();
 
+            // Informations médicales
             $table->text('plaintes_motif')->nullable();
             $table->text('hypothese_diagnostic')->nullable();
 
-            // Optionnel: pas de contrainte si l’entité "affectation" n’existe pas encore
+            // 🔗 Affectation (optionnelle)
             $table->uuid('affectation_id')->nullable();
 
-            $table->enum('statut', ['ouvert','clos'])->default('ouvert');
-            $table->timestamp('clos_at')->nullable();
+            // 💰 Tarification
+            $table->foreignUuid('tarif_id')
+                  ->nullable()
+                  ->constrained('tarifs')
+                  ->nullOnDelete();
 
+            $table->decimal('montant_prevu', 14, 2)->nullable();
+            $table->decimal('montant_du', 14, 2)->nullable();
+            $table->string('devise', 10)->nullable();
+
+            // 📊 Statut et clôture
+            $table->enum('statut', ['EN_ATTENTE','A_ENCAISSER','PAYEE','CLOTUREE'])
+                  ->default('EN_ATTENTE');
+
+            $table->timestamp('clos_at')->nullable();
             $table->timestamps();
 
-            // Index
-            $table->index(['patient_id','created_at']);
-            $table->index(['service_id','statut']);
+            // 🧩 Index
+            $table->index(['patient_id', 'created_at']);
+            $table->index(['service_id', 'statut']);
+            $table->index(['medecin_id']);
+            $table->index(['agent_id']);
+            $table->index(['tarif_id']);
         });
     }
 
-    public function down(): void {
+    public function down(): void
+    {
         Schema::dropIfExists('visites');
     }
 };

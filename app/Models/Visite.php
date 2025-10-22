@@ -30,8 +30,24 @@ class Visite extends Model
 
     protected $appends = ['est_soldee'];
 
-   protected static function booted(): void
+    protected static function booted(): void
     {
+        // ➕ Remplir le médecin (sans fallback sur l'utilisateur connecté)
+        $fillDoctor = function (self $v): void {
+            if ($v->medecin_id) {
+                $user = \App\Models\User::query()
+                    ->with(['personnel:id,user_id,first_name,last_name'])
+                    ->find($v->medecin_id);
+
+                if ($user) {
+                    $v->medecin_nom = optional($user->personnel)->full_name ?: $user->name;
+                }
+            } else {
+                // si aucun médecin n'est choisi, laisser vide
+                $v->medecin_nom = $v->medecin_nom ?: null;
+            }
+        };
+
         // Petite fonction interne qu’on réutilise pour "remplir" la tarification
         $fillPricing = function (self $v) {
             $isEmpty = static fn($x) => $x === null || $x === '' || (is_numeric($x) && (float)$x == 0.0);
@@ -77,19 +93,22 @@ class Visite extends Model
             $v->statut ??= 'EN_ATTENTE';
         };
 
-        static::creating(function (self $v) use ($fillPricing) {
-            if (! $v->id) $v->id = (string) \Illuminate\Support\Str::uuid();
+        static::creating(function (self $v) use ($fillDoctor, $fillPricing) {
+            if (! $v->id) $v->id = (string) Str::uuid();
+            $fillDoctor($v);
             $fillPricing($v);
         });
 
-        // Optionnel mais pratique : si on change service/tarif à l’update, recalcule au besoin
-        static::updating(function (self $v) use ($fillPricing) {
+        // Optionnel mais pratique : si on change service/tarif/medecin à l’update, recalcule au besoin
+        static::updating(function (self $v) use ($fillDoctor, $fillPricing) {
+            if ($v->isDirty('medecin_id') || $v->isDirty('medecin_nom')) {
+                $fillDoctor($v);
+            }
             if ($v->isDirty(['service_id','tarif_id','montant_prevu','montant_du','devise'])) {
                 $fillPricing($v);
             }
         });
     }
- 
 
     // ----------------
     // Relations
@@ -120,12 +139,11 @@ class Visite extends Model
     public function getEstSoldeeAttribute(): bool
     {
         return (float) $this->montant_du <= 0.0;
-        }
+    }
 
     // À AJOUTER dans la classe Visite (avec les autres relations)
     public function aru()
     {
         return $this->hasOne(\App\Models\Aru::class, 'visite_id');
     }
-
 }

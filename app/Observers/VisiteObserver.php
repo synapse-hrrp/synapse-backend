@@ -70,5 +70,8 @@ class VisiteObserver
 
         // 5) Création idempotente
         $detail::firstOrCreate([$fk => $visite->id], $payload);
+
+         // Crée automatiquement la facture de la visite
+        app(\App\Services\VisitInvoiceService::class)->createForVisite($visite);
     }
 }

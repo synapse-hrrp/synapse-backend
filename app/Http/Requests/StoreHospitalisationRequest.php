@@ -1,0 +1,50 @@
+<?php
+
+namespace App\Http\Requests;
+
+use Illuminate\Foundation\Http\FormRequest;
+
+class StoreHospitalisationRequest extends FormRequest
+{
+    public function authorize(): bool
+    {
+        return true;
+    }
+
+    public function rules(): array
+    {
+        return [
+            'patient_id'          => ['required','uuid','exists:patients,id'],
+            'service_slug'        => ['nullable','string','exists:services,slug'],
+
+            'admission_no'        => ['nullable','string','max:100'],
+            'created_via'         => ['nullable','in:service,med,admin'],
+
+            // logistique
+            'unite'               => ['nullable','string','max:100'],
+            'chambre'             => ['nullable','string','max:100'],
+            'lit'                 => ['nullable','string','max:100'],
+            'lit_id'              => ['nullable','integer'], // adapte si table "lits" → exists:lits,id
+            'medecin_traitant_id' => ['nullable','uuid','exists:personnels,id'],
+
+            // clinique
+            'motif_admission'     => ['nullable','string'],
+            'diagnostic_entree'   => ['nullable','string'],
+            'diagnostic_sortie'   => ['nullable','string'],
+            'notes'               => ['nullable','string'],
+            'prise_en_charge_json'=> ['nullable','array'],
+
+            // workflow
+            'statut'              => ['nullable','in:en_cours,transfere,sorti,annule'],
+            'date_admission'      => ['nullable','date'],
+            'date_sortie_prevue'  => ['nullable','date'],
+            'date_sortie_reelle'  => ['nullable','date'],
+
+            // interdits
+            'prix'                => ['prohibited'],
+            'devise'              => ['prohibited'],
+            'facture_id'          => ['prohibited'],
+            'created_by_user_id'  => ['prohibited'],
+        ];
+    }
+}
