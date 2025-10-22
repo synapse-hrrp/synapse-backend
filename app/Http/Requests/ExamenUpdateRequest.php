@@ -37,7 +37,7 @@ class ExamenUpdateRequest extends FormRequest
             'intervalle_reference' => ['sometimes','nullable','string','max:255'],
             'resultat_json'        => ['sometimes','nullable','array'],
 
-            'demande_par'        => ['sometimes','nullable','integer','exists:personnels,id'],
+            'demande_par'        => ['sometimes','nullable','integer','exists:medecins,id'],
             'date_demande'       => ['sometimes','nullable','date'],
             'valide_par'         => ['sometimes','nullable','integer','exists:personnels,id'],
             'date_validation'    => ['sometimes','nullable','date'],

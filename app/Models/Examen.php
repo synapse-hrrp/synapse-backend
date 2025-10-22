@@ -113,7 +113,7 @@ class Examen extends Model
     /** Relations */
     public function patient()     { return $this->belongsTo(Patient::class); }
     public function service()     { return $this->belongsTo(Service::class, 'service_slug', 'slug'); }
-    public function demandeur()   { return $this->belongsTo(Personnel::class, 'demande_par'); }
+    public function demandeur()   { return $this->belongsTo(Medecin::class, 'demande_par'); }
     public function validateur()  { return $this->belongsTo(Personnel::class, 'valide_par'); }
     public function creator()     { return $this->belongsTo(User::class, 'created_by_user_id'); }
 

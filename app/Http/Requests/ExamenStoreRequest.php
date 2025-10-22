@@ -28,7 +28,7 @@ class ExamenStoreRequest extends FormRequest
 
             // Infos médicales
             'prelevement'  => ['nullable','string','max:255'],
-            'demande_par'  => ['nullable','integer','exists:personnels,id'],
+            'demande_par'  => ['nullable','integer','exists:medecins,id'],
             'date_demande' => ['nullable','date'],
 
             // Résultats (optionnels)
