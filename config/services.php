@@ -35,6 +35,12 @@ return [
         ],
     ],
 
+    'pharma' => [
+        'invoice_webhook_url'   => env('PHARMA_INVOICE_WEBHOOK_URL'),   // ex: http://127.0.0.1:8000/api/v1/finance/invoices
+        'invoice_webhook_token' => env('PHARMA_INVOICE_WEBHOOK_TOKEN'), // Bearer <token>
+    ],
+
+
     // 👉 Ajout de ta config HMAC
     'core' => [
         'secret' => null, // SECRET partagé avec l’orchestrateur

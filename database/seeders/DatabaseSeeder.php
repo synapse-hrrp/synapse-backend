@@ -15,6 +15,8 @@ class DatabaseSeeder extends Seeder
     {
         $this->call(ServiceSeeder::class);
         $this->call(RolesAndPermissionsSeeder::class);
+        $this->call(PharmaStockThresholdSeeder::class);
+        $this->call(\Database\Seeders\PharmaSmartThresholdSeeder::class);
     }
 
     

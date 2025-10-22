@@ -24,11 +24,26 @@ class FactureController extends Controller
     }
 
     // GET /factures/{facture}
-    public function show(Facture $facture): JsonResponse
+    public function show(string $id): \Illuminate\Http\JsonResponse
     {
-        return response()->json([
-            'data' => $facture->load('lignes','reglements','visite')
-        ]);
+        $facture = \App\Models\Facture::with([
+            'lignes',       // lignes de facture
+            'reglements',   // paiements
+            'visite',       // (si liée)
+        ])->findOrFail($id);
+
+        return response()->json(
+            [
+                'data'  => $facture,
+                'links' => [
+                    'self' => route('factures.show', $facture),
+                    'pdf'  => route('factures.pdf',  $facture),
+                ],
+            ],
+            200,
+            ['Content-Type' => 'application/json; charset=utf-8'],
+            JSON_UNESCAPED_UNICODE | JSON_PRESERVE_ZERO_FRACTION
+        );
     }
 
     /**
@@ -87,9 +102,27 @@ class FactureController extends Controller
     // GET /factures/{facture}/pdf
     public function pdf(Facture $facture)
     {
-        $facture->load('lignes','visite.patient');
-        // nécessite: composer require barryvdh/laravel-dompdf
-        //$pdf = \PDF::loadView('factures.pdf', compact('facture'));
-        //return $pdf->download($facture->numero . '.pdf');
+        // Charger tout ce qu’il faut (les deux possibilités de patient)
+        $facture->load([
+            'lignes',
+            'reglements',
+            'visite.patient',
+            'patient', // <= relation directe
+        ]);
+
+        // Choisir la source patient: direct d'abord, sinon via visite
+        $patient = $facture->patient ?? ($facture->visite->patient ?? null);
+
+        // Si tu utilises DomPDF :
+        // composer require barryvdh/laravel-dompdf
+        // \PDF::setOptions(['isHtml5ParserEnabled' => true, 'isRemoteEnabled' => true]);
+        $pdf = \PDF::loadView('factures.pdf', [
+            'facture' => $facture,
+            'patient' => $patient,
+        ]);
+
+        // Afficher dans le navigateur (ou ->download(...) pour forcer le téléchargement)
+        return $pdf->stream($facture->numero . '.pdf');
     }
+
 }
