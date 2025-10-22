@@ -14,6 +14,7 @@ use App\Models\Echographie;
 use App\Models\Hospitalisation;
 use App\Models\DeclarationNaissance;
 use App\Models\BilletSortie;
+use App\Models\Accouchement;                 // <— AJOUT
 
 // Observers existants
 use App\Observers\VisiteObserver;
@@ -25,6 +26,7 @@ use App\Observers\EchographieObserver;
 use App\Observers\HospitalisationObserver;
 use App\Observers\DeclarationNaissanceObserver;
 use App\Observers\BilletSortieObserver;
+use App\Observers\AccouchementObserver;      // <— AJOUT
 
 class AppServiceProvider extends ServiceProvider
 {
@@ -48,7 +50,7 @@ class AppServiceProvider extends ServiceProvider
             Examen::observe(ExamenObserver::class);
         }
 
-        // — Nouveaux observers (écho / hospit / déclaration / billet)
+        // — Nouveaux observers
         if (class_exists(EchographieObserver::class)) {
             Echographie::observe(EchographieObserver::class);
         }
@@ -63,6 +65,11 @@ class AppServiceProvider extends ServiceProvider
 
         if (class_exists(BilletSortieObserver::class)) {
             BilletSortie::observe(BilletSortieObserver::class);
+        }
+
+        // — Accouchement
+        if (class_exists(AccouchementObserver::class)) {
+            Accouchement::observe(AccouchementObserver::class);
         }
     }
 }

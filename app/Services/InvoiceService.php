@@ -10,10 +10,13 @@ use App\Models\{
     Hospitalisation,
     DeclarationNaissance,
     BilletSortie,
-    Tarif
+    Tarif,
+    Accouchement            // ← AJOUT
 };
 use Illuminate\Support\Facades\DB;
 use Illuminate\Validation\ValidationException;
+use Illuminate\Support\Facades\Schema;       // ← important pour Schema::hasColumn
+
 
 class InvoiceService
 {
@@ -21,9 +24,6 @@ class InvoiceService
      |                              TARIFS
      |=======================================================================*/
 
-    /**
-     * Trouve un tarif actif par code (+ service si fourni), avec fallback global.
-     */
     public function findActiveTarif(?string $serviceSlug, string $code): ?Tarif
     {
         $code = strtoupper(trim($code));
@@ -42,10 +42,6 @@ class InvoiceService
      |                         FACTURES – OUVERTURE
      |=======================================================================*/
 
-    /**
-     * Récupère une facture "ouverte" pour le patient et la devise (IMPAYEE/DRAFT),
-     * sinon en crée une nouvelle. On sépare par devise pour éviter de mélanger.
-     */
     public function getOrCreateOpenInvoice(string $patientId, ?string $devise = 'XAF'): Facture
     {
         $devise = strtoupper(trim((string)($devise ?: 'XAF')));
@@ -57,9 +53,7 @@ class InvoiceService
             ->latest()
             ->first();
 
-        if ($open) {
-            return $open;
-        }
+        if ($open) return $open;
 
         return Facture::create([
             'patient_id'    => $patientId,
@@ -70,9 +64,6 @@ class InvoiceService
         ]);
     }
 
-    /**
-     * Recalcule simple (somme des lignes) si ton modèle n’a pas recalc().
-     */
     public function recalcInvoice(Facture $facture): void
     {
         if (method_exists($facture, 'recalc')) {
@@ -87,10 +78,6 @@ class InvoiceService
         ]);
     }
 
-    /**
-     * Ajoute une ligne via la méthode métier si dispo, sinon via la relation.
-     * $payload attendu : designation, quantite, prix_unitaire, [montant], [tarif_id]
-     */
     protected function addLine(Facture $facture, array $payload): FactureLigne
     {
         $payload['designation']   = trim((string)($payload['designation'] ?? ''));
@@ -101,8 +88,7 @@ class InvoiceService
             : (float) ($payload['quantite'] * $payload['prix_unitaire']);
 
         if (method_exists($facture, 'ajouterLigne')) {
-            $ligne = $facture->ajouterLigne($payload); // doit recalculer si ton modèle le fait
-            // en cas de modèle n’ayant pas recalc() dans ajouterLigne:
+            $ligne = $facture->ajouterLigne($payload);
             if (method_exists($facture, 'recalc')) {
                 $facture->recalc();
             }
@@ -112,7 +98,6 @@ class InvoiceService
         /** @var FactureLigne $ligne */
         $ligne = $facture->lignes()->create($payload);
         $this->recalcInvoice($facture);
-
         return $ligne;
     }
 
@@ -120,13 +105,9 @@ class InvoiceService
      |                             ATTACH – EXAMEN
      |=======================================================================*/
 
-    /**
-     * Comportement existant : crée UNE facture par examen (pas de réutilisation).
-     */
     public function attachExam(Examen $examen): Facture
     {
         return DB::transaction(function () use ($examen) {
-
             $facture = Facture::create([
                 'patient_id'    => $examen->patient_id,
                 'devise'        => strtoupper(trim($examen->devise ?? 'XAF')),
@@ -135,7 +116,6 @@ class InvoiceService
                 'statut'        => 'IMPAYEE',
             ]);
 
-            // Cherche le tarif uniquement pour tracer l’id
             $tarifId = null;
             if ($examen->code_examen) {
                 $tarifQ = Tarif::query()->actifs()->byCode($examen->code_examen);
@@ -162,15 +142,9 @@ class InvoiceService
      |                          ATTACH – ECHOGRAPHIE
      |=======================================================================*/
 
-    /**
-     * Échographie : exige un code tarif (code_echo), récupère le tarif,
-     * ouvre/choisit une facture dans la même devise, ajoute la ligne
-     * et met à jour l’écho (prix, devise, facture_id).
-     */
     public function attachEchographie(Echographie $echo): Facture
     {
         return DB::transaction(function () use ($echo) {
-
             $code = $echo->code_echo ? strtoupper(trim($echo->code_echo)) : '';
             if (!$code) {
                 throw ValidationException::withMessages(['tarif_code' => 'Code tarif écho manquant.']);
@@ -181,7 +155,7 @@ class InvoiceService
                 throw ValidationException::withMessages(['tarif' => "Tarif introuvable pour code '{$code}'"]);
             }
 
-            $devise = strtoupper(trim($tarif->devise ?? 'XAF'));
+            $devise  = strtoupper(trim($tarif->devise ?? 'XAF'));
             $facture = $this->getOrCreateOpenInvoice($echo->patient_id, $devise);
 
             $this->addLine($facture, [
@@ -237,9 +211,6 @@ class InvoiceService
      |                    ATTACH – DÉCLARATION DE NAISSANCE
      |=======================================================================*/
 
-    /**
-     * Facture au nom de la mère (mere_id). Code par défaut DECL_NAIS.
-     */
     public function attachDeclaration(DeclarationNaissance $decl): Facture
     {
         return DB::transaction(function () use ($decl) {
@@ -297,8 +268,55 @@ class InvoiceService
                 'prix_unitaire' => (float) $tarif->montant,
             ]);
 
-            // si tu ajoutes plus tard une colonne facture_id sur billets_sortie :
-            // $billet->updateQuietly(['facture_id' => $facture->getKey()]);
+            // $billet->updateQuietly(['facture_id' => $facture->getKey()]); // si colonne ajoutée
+
+            return $facture->fresh(['lignes','reglements']);
+        });
+    }
+
+    /* =======================================================================
+     |                           ATTACH – ACCOUCHEMENT
+     |=======================================================================*/
+
+    /**
+     * Accouchement : facture au nom de la mère (patient_id ou mere_id selon ton modèle),
+     * code par défaut depuis la config: billing.codes.accouchement (fallback 'ACCOUCH').
+     */
+    public function attachAccouchement(Accouchement $acc): Facture
+    {
+        return DB::transaction(function () use ($acc) {
+            // code tarif configurable
+            $code  = config('billing.codes.accouchement', 'ACCOUCH');
+            $tarif = $this->findActiveTarif($acc->service_slug ?? null, $code);
+
+            if (!$tarif) {
+                throw ValidationException::withMessages([
+                    'tarif' => "Tarif introuvable pour accouchement (code {$code})."
+                ]);
+            }
+
+            // identifiant patient à facturer : adapte selon ton schéma
+            // ex: $acc->mere_id ou $acc->patient_id
+            $patientId = $acc->mere_id ?? $acc->patient_id;
+
+            $devise  = strtoupper(trim($tarif->devise ?? 'XAF'));
+            $facture = $this->getOrCreateOpenInvoice($patientId, $devise);
+
+            // désignation lisible
+            $designation = $tarif->libelle ?: 'Accouchement';
+
+            $this->addLine($facture, [
+                'tarif_id'      => $tarif->id,
+                'designation'   => $designation,
+                'quantite'      => 1,
+                'prix_unitaire' => (float) $tarif->montant,
+            ]);
+
+            // si ton modèle Accouchement possède facture_id :
+            if (Schema::hasColumn($acc->getTable(), 'facture_id')) {
+                $acc->updateQuietly(['facture_id' => $facture->getKey()]);
+            }
+
 
             return $facture->fresh(['lignes','reglements']);
         });
