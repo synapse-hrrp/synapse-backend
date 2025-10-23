@@ -571,22 +571,23 @@ Route::prefix('v1')->group(function () {
     // ── Examens (/api/v1/examens) ───────────────────────────────────────────
     Route::middleware(['auth:sanctum','throttle:auth'])->group(function () {
         Route::get(   'examens',            [ExamenController::class, 'index'])
-            ->middleware('ability:examens.view')->name('v1.examens.index');
+            ->middleware('ability:examen.view')->name('v1.examen.index');
 
         Route::post(  'examens',            [ExamenController::class, 'store'])
-            ->middleware('ability:examens.create')->name('v1.examens.store');
+            ->middleware('ability:examen.create')->name('v1.examen.store');
 
         Route::get(   'examens/{examen}',   [ExamenController::class, 'show'])
-            ->middleware('ability:examens.view')->name('v1.examens.show');
+            ->middleware('ability:examen.view')->name('v1.examen.show');
 
         Route::patch( 'examens/{examen}',   [ExamenController::class, 'update'])
-            ->middleware('ability:examens.update')->name('v1.examens.update');
+            ->middleware('ability:examen.update')->name('v1.examen.update');
 
         Route::put(   'examens/{examen}',   [ExamenController::class, 'update'])
-            ->middleware('ability:examens.update');
+            ->middleware('ability:examen.update');
 
         Route::delete('examens/{examen}',   [ExamenController::class, 'destroy'])
-            ->middleware('ability:examens.delete')->name('v1.examens.destroy');
+            ->middleware('ability:examen.delete')->name('v1.examen.
+            .destroy');
 
         // Créer un examen "depuis un service" (assoc auto au service)
         Route::post('services/{service}/examens', [ExamenController::class, 'storeForService'])

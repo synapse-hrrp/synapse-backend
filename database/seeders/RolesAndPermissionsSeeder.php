@@ -116,7 +116,7 @@ class RolesAndPermissionsSeeder extends Seeder
 
             // Laborantin
             'laborantin' => [
-                'examen.view','examen.request.create','examen.result.write',
+                'examen.view','examen.create','examen.request.create','examen.result.write',
                 'stats.view',
             ],
 
