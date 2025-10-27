@@ -16,9 +16,10 @@ class StockController extends Controller
     |--------------------------------------------------------------------------
     | IN (réception)
     |--------------------------------------------------------------------------
-    | - Si unit_price / sell_price absents → reprendre prix article
-    | - Si le lot existe déjà, on conserve ses prix (snapshot)
-    |   sauf si un prix est explicitement fourni dans la requête
+    | - Si unit_price / sell_price absents → on n'écrase pas, le lot hérite
+    |   de l’article via PharmaLot::booted() côté modèle
+    | - Si le lot existe, on n’écrase pas ses prix sauf si la requête fournit
+    |   explicitement unit_price ou sell_price
     */
     public function in(Request $request)
     {
@@ -28,7 +29,7 @@ class StockController extends Controller
             'expires_at' => ['nullable','date'],
             'quantity'   => ['required','integer','min:1'],
             'unit_price' => ['nullable','numeric','min:0'], // buy_price
-            'sell_price' => ['nullable','numeric','min:0'], // prix de vente par lot (optionnel)
+            'sell_price' => ['nullable','numeric','min:0'], // prix vente par lot (optionnel)
             'supplier'   => ['nullable','string','max:190'],
             'reference'  => ['nullable','string','max:190'],
         ]);
@@ -40,9 +41,9 @@ class StockController extends Controller
             $buy  = array_key_exists('unit_price', $data) ? $data['unit_price'] : $article->buy_price;
             $sell = array_key_exists('sell_price', $data) ? $data['sell_price'] : $article->sell_price;
 
-            // Créer ou récupérer le lot
+            // Créer ou récupérer le lot (clé composite article_id + lot_number)
             $lot = PharmaLot::firstOrCreate(
-                ['article_id' => $article->id, 'lot_number' => $data['lot_number']],
+                ['article_id' => $article->id, 'lot_number' => trim($data['lot_number'])],
                 [
                     'expires_at' => $data['expires_at'] ?? null,
                     'quantity'   => 0,
@@ -66,7 +67,7 @@ class StockController extends Controller
             $mv = PharmaStockMovement::create([
                 'article_id' => $article->id,
                 'lot_id'     => $lot->id,
-                'type'       => 'in',
+                'type'       => 'in', // minuscule uniforme
                 'quantity'   => (int) $data['quantity'],
                 'unit_price' => $buy,
                 'reason'     => 'reception',
@@ -89,6 +90,7 @@ class StockController extends Controller
     | OUT (vente / transfert / casse) – FEFO
     |--------------------------------------------------------------------------
     | - Priorité aux lots qui expirent le plus tôt (NULL à la fin)
+    | - Ignore les lots périmés (sécurité)
     | - Prix unitaire = sell_price du lot, sinon sell_price article, sinon 0
     */
     public function out(Request $request)
@@ -107,6 +109,10 @@ class StockController extends Controller
 
             $lots = PharmaLot::where('article_id', $article->id)
                 ->where('quantity','>',0)
+                // ignorer périmés
+                ->where(function($w){
+                    $w->whereNull('expires_at')->orWhere('expires_at', '>=', now()->toDateString());
+                })
                 ->orderByRaw('CASE WHEN expires_at IS NULL THEN 1 ELSE 0 END, expires_at ASC, id ASC')
                 ->lockForUpdate()
                 ->get();
@@ -125,7 +131,7 @@ class StockController extends Controller
                 $movements[] = PharmaStockMovement::create([
                     'article_id' => $article->id,
                     'lot_id'     => $lot->id,
-                    'type'       => 'out',
+                    'type'       => 'out', // minuscule uniforme
                     'quantity'   => $take,
                     'unit_price' => $unitPrice,
                     'reason'     => $data['reason'] ?? 'sale',
@@ -142,10 +148,32 @@ class StockController extends Controller
                 ]);
             }
 
+            // ✅ enrichir la réponse avec lot_number / expires_at (sans appeler ->load sur la collection)
+            foreach ($movements as $m) {
+                $m->load('lot:id,lot_number,expires_at');
+            }
+
+            $movementsPayload = collect($movements)->map(function ($m) {
+                return [
+                    'id'          => $m->id,
+                    'article_id'  => $m->article_id,
+                    'lot_id'      => $m->lot_id,
+                    'lot_number'  => $m->lot?->lot_number,
+                    'expires_at'  => optional($m->lot?->expires_at)->toDateString(),
+                    'type'        => $m->type,
+                    'quantity'    => (int) $m->quantity,
+                    'unit_price'  => number_format((float) $m->unit_price, 2, '.', ''),
+                    'reason'      => $m->reason,
+                    'reference'   => $m->reference,
+                    'user_id'     => $m->user_id,
+                    'created_at'  => $m->created_at?->toIso8601String(),
+                ];
+            });
+
             return response()->json([
                 'message'    => 'Sortie stock enregistrée (FEFO)',
                 'dispatched' => (int) $data['quantity'],
-                'movements'  => $movements,
+                'movements'  => $movementsPayload,
                 'stock'      => $this->stockWarnings($article),
             ], 201);
         });
@@ -189,7 +217,7 @@ class StockController extends Controller
             $mv = PharmaStockMovement::create([
                 'article_id' => $data['article_id'],
                 'lot_id'     => $data['lot_id'],
-                'type'       => $type,
+                'type'       => $type, // minuscule uniforme
                 'quantity'   => abs((int) $data['quantity_diff']),
                 'unit_price' => null,
                 'reason'     => $data['reason'] ?? 'inventory_adjustment',
@@ -208,9 +236,8 @@ class StockController extends Controller
 
     /*
     |--------------------------------------------------------------------------
-    | Mouvements (listing)
+    | Mouvements (listing) + filtres
     |--------------------------------------------------------------------------
-    | Ajout d’un filtre plein-texte (q) sur article.name/code
     */
     public function movements(Request $request)
     {
@@ -353,9 +380,11 @@ class StockController extends Controller
         ];
     }
 
-
-    // GET /api/v1/pharma/stock/alerts
-    // GET /api/v1/pharma/stock/alerts
+    /*
+    |--------------------------------------------------------------------------
+    | Alerts (min/max) pour tout le catalogue
+    |--------------------------------------------------------------------------
+    */
     public function alerts(Request $request)
     {
         $includeOk  = (bool) $request->boolean('include_ok', false);
@@ -426,8 +455,11 @@ class StockController extends Controller
         ]);
     }
 
-
-    // POST /api/v1/pharma/stock/thresholds
+    /*
+    |--------------------------------------------------------------------------
+    | POST /api/v1/pharma/stock/thresholds
+    |--------------------------------------------------------------------------
+    */
     public function setThresholds(Request $request)
     {
         $data = $request->validate([
@@ -461,4 +493,49 @@ class StockController extends Controller
         ]);
     }
 
+    /*
+    |--------------------------------------------------------------------------
+    | GET /api/v1/pharma/lots  (debug/visualisation FEFO)
+    |--------------------------------------------------------------------------
+    */
+    public function lots(Request $request)
+    {
+        $data = $request->validate([
+            'article_id'      => ['required','exists:pharma_articles,id'],
+            'include_expired' => ['sometimes','boolean'],
+        ]);
+
+        $includeExpired = (bool) ($data['include_expired'] ?? false);
+
+        $query = PharmaLot::query()
+            ->where('article_id', $data['article_id'])
+            ->where('quantity', '>', 0)
+            ->with('article:id,name,code,sell_price')
+            ->orderByRaw('CASE WHEN expires_at IS NULL THEN 1 ELSE 0 END, expires_at ASC, id ASC');
+
+        if (! $includeExpired) {
+            $query->where(function($w){
+                $w->whereNull('expires_at')->orWhere('expires_at', '>=', now()->toDateString());
+            });
+        }
+
+        $lots = $query->get(['id','article_id','lot_number','expires_at','quantity','sell_price']);
+
+        $payload = $lots->map(function ($l) {
+            return [
+                'id'         => $l->id,
+                'lot_number' => $l->lot_number,
+                'expires_at' => optional($l->expires_at)->toDateString(),
+                'quantity'   => (int) $l->quantity,
+                'sell_price' => (float) ($l->sell_price ?? $l->article->sell_price ?? 0),
+            ];
+        });
+
+        return response()->json([
+            'article'        => $lots->first()?->article?->only(['id','code','name']),
+            'total_on_hand'  => (int) $lots->sum('quantity'),
+            'include_expired'=> $includeExpired,
+            'lots'           => $payload,
+        ]);
+    }
 }

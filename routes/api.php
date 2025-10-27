@@ -65,6 +65,7 @@ use App\Http\Controllers\Api\Pharma\StockController;
 use App\Http\Controllers\Api\Pharma\CartController;
 
 
+
 Route::prefix('v1')->group(function () {
 
     // ── Auth (/api/v1/auth) ────────────────────────────────────────────────
@@ -947,13 +948,18 @@ Route::prefix('v1')->group(function () {
             ->middleware('ability:hospitalisations.create')->name('v1.services.hospitalisations.store');
     });
 
+    Route::middleware(['auth:sanctum','throttle:auth'])
+    ->prefix('pharma')
+    ->group(function () {
 
+        /*
+        |--------------------------------------------------------------------------
+        | DCI
+        |--------------------------------------------------------------------------
+        */
+        Route::get('dcis/options', [DciController::class,'options'])
+            ->middleware('ability:pharma.dci.view');
 
-
-    Route::middleware(['auth:sanctum','throttle:auth'])->prefix('pharma')->group(function () {
-
-        // DCI
-        Route::get('dcis/options', [DciController::class,'options'])->middleware('ability:pharma.dci.view');
         Route::apiResource('dcis', DciController::class)->middleware([
             'index'   => 'ability:pharma.dci.view',
             'show'    => 'ability:pharma.dci.view',
@@ -962,38 +968,79 @@ Route::prefix('v1')->group(function () {
             'destroy' => 'ability:pharma.dci.manage',
         ]);
 
-        // Articles
-        Route::get('articles/options', [ArticleController::class,'options'])->middleware('ability:pharma.article.view');
-        Route::apiResource('articles', ArticleController::class)->middleware([
-            'index'   => 'ability:pharma.article.view',
-            'show'    => 'ability:pharma.article.view',
-            'store'   => 'ability:pharma.article.manage',
-            'update'  => 'ability:pharma.article.manage',
-            'destroy' => 'ability:pharma.article.manage',
-        ])->parameters(['articles' => 'article']);
+        /*
+        |--------------------------------------------------------------------------
+        | Articles
+        |--------------------------------------------------------------------------
+        */
+        Route::get('articles/options', [ArticleController::class,'options'])
+            ->middleware('ability:pharma.article.view');
 
-        // Stock
-        Route::post('stock/in',     [StockController::class,'in'])->middleware('ability:pharma.stock.in');
-        Route::post('stock/out',    [StockController::class,'out'])->middleware('ability:pharma.stock.out');
-        Route::post('stock/adjust', [StockController::class,'adjust'])->middleware('ability:pharma.stock.adjust');
+        Route::apiResource('articles', ArticleController::class)
+            ->parameters(['articles' => 'article'])
+            ->middleware([
+                'index'   => 'ability:pharma.article.view',
+                'show'    => 'ability:pharma.article.view',
+                'store'   => 'ability:pharma.article.manage',
+                'update'  => 'ability:pharma.article.manage',
+                'destroy' => 'ability:pharma.article.manage',
+            ]);
 
-        Route::get('stock/movements',   [StockController::class,'movements'])->middleware('ability:pharma.stock.view');
-        Route::get('stock/summary',     [StockController::class,'summary'])->middleware('ability:pharma.stock.view');
-        Route::get('stock/top-sellers', [StockController::class,'topSellers'])->middleware('ability:pharma.stock.view');
-        Route::get('stock/oldest-lots', [StockController::class,'oldestLots'])->middleware('ability:pharma.stock.view');
-        Route::get('stock/alerts',      [StockController::class,'alerts'])->middleware('ability:pharma.stock.view');
-        Route::post('stock/thresholds', [StockController::class,'setThresholds'])->middleware('ability:pharma.article.manage');
+        /*
+        |--------------------------------------------------------------------------
+        | Stock
+        |--------------------------------------------------------------------------
+        */
+        Route::post('stock/in',     [StockController::class,'in'])
+            ->middleware('ability:pharma.stock.in');
+        Route::post('stock/out',    [StockController::class,'out'])
+            ->middleware('ability:pharma.stock.out');
+        Route::post('stock/adjust', [StockController::class,'adjust'])
+            ->middleware('ability:pharma.stock.adjust');
 
-        // Carts
-        Route::post('carts', [CartController::class,'store'])->middleware('ability:pharma.cart.manage');
-        Route::get('carts/{cart}', [CartController::class,'show'])->middleware('ability:pharma.cart.manage');
+        Route::get('stock/movements',   [StockController::class,'movements'])
+            ->middleware('ability:pharma.stock.view');
+        Route::get('stock/summary',     [StockController::class,'summary'])
+            ->middleware('ability:pharma.stock.view');
+        Route::get('stock/top-sellers', [StockController::class,'topSellers'])
+            ->middleware('ability:pharma.stock.view');
+        Route::get('stock/oldest-lots', [StockController::class,'oldestLots'])
+            ->middleware('ability:pharma.stock.view');
+        Route::get('stock/alerts',      [StockController::class,'alerts'])
+            ->middleware('ability:pharma.stock.view');
+        Route::post('stock/thresholds', [StockController::class,'setThresholds'])
+            ->middleware('ability:pharma.article.manage');
 
-        Route::post('carts/{cart}/lines', [CartController::class,'addLine'])->middleware('ability:pharma.cart.manage');
-        Route::patch('carts/{cart}/lines/{line}', [CartController::class,'updateLine'])->middleware('ability:pharma.cart.manage');
-        Route::delete('carts/{cart}/lines/{line}', [CartController::class,'removeLine'])->middleware('ability:pharma.cart.manage');
+        // ✅ Nouvelle route FEFO pour voir les lots d’un article
+        Route::get('lots', [StockController::class, 'lots'])
+            ->middleware('ability:pharma.stock.view');
 
-        Route::post('carts/{cart}/checkout', [CartController::class,'checkout'])->middleware('ability:pharma.cart.checkout');
+        /*
+        |--------------------------------------------------------------------------
+        | Carts
+        |--------------------------------------------------------------------------
+        */
+        Route::post('carts', [CartController::class,'store'])
+            ->middleware('ability:pharma.cart.manage');
+        Route::get('carts/{cart}', [CartController::class,'show'])
+            ->middleware('ability:pharma.cart.manage');
+
+        Route::post('carts/{cart}/lines', [CartController::class,'addLine'])
+            ->middleware('ability:pharma.cart.manage');
+        Route::patch('carts/{cart}/lines/{line}', [CartController::class,'updateLine'])
+            ->middleware('ability:pharma.cart.manage');
+        Route::delete('carts/{cart}/lines/{line}', [CartController::class,'removeLine'])
+            ->middleware('ability:pharma.cart.manage');
+
+        Route::post('carts/{cart}/checkout', [CartController::class,'checkout'])
+            ->middleware('ability:pharma.cart.checkout');
     });
 
 
 });
+
+
+
+
+
+
