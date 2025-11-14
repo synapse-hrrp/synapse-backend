@@ -61,7 +61,7 @@ return new class extends Migration
             $table->foreign('valide_par')->references('id')->on('personnels')->cascadeOnUpdate()->nullOnDelete();
 
             // Si tu as "factures", décommente :
-            // $table->foreign('facture_id')->references('id')->on('factures')->cascadeOnUpdate()->nullOnDelete();
+            $table->foreign('facture_id')->references('id')->on('factures')->cascadeOnUpdate()->nullOnDelete();
         });
     }
 

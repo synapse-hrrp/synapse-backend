@@ -1,6 +1,5 @@
 <?php
 
-// app/Models/Service.php
 namespace App\Models;
 
 use Illuminate\Database\Eloquent\Model;
@@ -24,17 +23,29 @@ class Service extends Model
     // Tarif “courant” (actif le plus récent)
     public function tarif()
     {
-        // Si tu es en Laravel >= 8.42 : latestOfMany() est dispo.
         return $this->hasOne(Tarif::class, 'service_slug', 'slug')
                     ->where('is_active', true)
-                    ->latestOfMany(); // sinon remplace par ->orderByDesc('created_at')
+                    ->latestOfMany(); // sinon ->orderByDesc('created_at')
     }
 
     public function scopeActive($q){ return $q->where('is_active', true); }
     public function scopeSlug($q, string $slug){ return $q->where('slug', $slug); }
-    // À AJOUTER dans la classe Service
+
+    // Config helpers
     public function detailModelClass(): ?string { return $this->config['detail_model'] ?? null; }
     public function detailFk(): string         { return $this->config['detail_fk'] ?? 'visite_id'; }
     public function queueRoute(): ?string      { return $this->config['queue_route'] ?? null; }
 
+    // Relations complémentaires
+    public function medecins()
+    {
+        return $this->belongsToMany(Medecin::class, 'medecin_service', 'service_slug', 'medecin_id', 'slug', 'id')
+            ->withPivot(['is_active','slot_duration','capacity_per_slot'])
+            ->withTimestamps();
+    }
+
+    public function rendezVous()
+    {
+        return $this->hasMany(RendezVous::class, 'service_slug', 'slug');
+    }
 }

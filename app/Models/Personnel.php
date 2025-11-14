@@ -119,9 +119,41 @@ class Personnel extends Model
     {
         return trim(($this->first_name ?? '').' '.($this->last_name ?? ''));
     }
+
+    /**
+     * URL absolue de l’avatar (alignée sur la stratégie "pharmacie").
+     * - Si avatar_path est relatif (ex: "public/avatars/a.jpg" ou "avatars/a.jpg"),
+     *   on renvoie "APP_URL/storage/avatars/a.jpg".
+     * - Si c'est déjà une URL (http/https/data/blob), on la renvoie telle quelle.
+     */
     public function getAvatarUrlAttribute(): ?string
     {
-        if (!$this->avatar_path) return null;
-        return Storage::disk('public')->url($this->avatar_path);
+        $path = $this->avatar_path;
+        if (!$path) return null;
+
+        $p = trim((string) $path);
+
+        // Déjà une URL absolue ou data/blob ?
+        if (preg_match('#^(https?:)?//|^(data:|blob:)#i', $p)) {
+            return $p;
+        }
+
+        // Normaliser le chemin pour qu'il devienne "avatars/xxx.jpg"
+        $p = ltrim($p, '/');
+        if (str_starts_with($p, 'public/')) {
+            $p = substr($p, strlen('public/'));   // public/avatars/a.jpg -> avatars/a.jpg
+        }
+        if (str_starts_with($p, 'storage/')) {
+            $p = substr($p, strlen('storage/'));  // storage/avatars/a.jpg -> avatars/a.jpg
+        }
+
+        // Construire une URL ABSOLUE basée sur APP_URL
+        $base = rtrim(config('app.url') ?: env('APP_URL', ''), '/'); // ex: http://192.168.1.176:8000
+        if ($base === '') {
+            // fallback Storage si jamais APP_URL n'est pas défini
+            return Storage::disk('public')->url($p); // peut être relatif si APP_URL manquant
+        }
+
+        return $base . '/storage/' . $p; // http://host:port/storage/avatars/a.jpg
     }
 }

@@ -7,6 +7,7 @@ use Illuminate\Foundation\Auth\User as Authenticatable;
 use Illuminate\Notifications\Notifiable;
 use Laravel\Sanctum\HasApiTokens;
 use Spatie\Permission\Traits\HasRoles;
+use Illuminate\Database\Eloquent\Relations\BelongsToMany;
 
 class User extends Authenticatable
 {
@@ -71,9 +72,17 @@ class User extends Authenticatable
         return $this->hasOne(Personnel::class);
     }
 
-    /** Indique si l'utilisateur est lié à un médecin. */
     public function isMedecin(): bool
     {
         return (bool) optional($this->personnel)->medecin;
+    }
+
+    /**
+     * Services autorisés (pivot user_service).
+     */
+    public function services(): BelongsToMany
+    {
+        return $this->belongsToMany(Service::class, 'user_service', 'user_id', 'service_id');
+        // ->withTimestamps(); // décommente si le pivot a timestamps
     }
 }

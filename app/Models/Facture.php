@@ -30,8 +30,8 @@ class Facture extends Model
         // created_at / updated_at => datetime par défaut
     ];
 
-    // Pour exposer directement le montant payé dans les réponses JSON
-    protected $appends = ['montant_paye'];
+    // Pour exposer directement le montant payé + le service dans les réponses JSON
+    protected $appends = ['montant_paye', 'service_id'];
 
     protected static function booted(): void
     {
@@ -93,6 +93,36 @@ class Facture extends Model
             : $this->reglements()->sum('montant');
 
         return number_format((float) $paye, 2, '.', '');
+    }
+
+    /**
+     * 🔎 service_id calculé à partir de la visite associée
+     * Permet au front d'utiliser directement f.service_id
+     */
+    public function getServiceIdAttribute(): ?int
+    {
+        // Si un jour tu ajoutes une vraie colonne service_id, on la respecte
+        if (array_key_exists('service_id', $this->attributes ?? [])) {
+            return $this->attributes['service_id'] !== null
+                ? (int) $this->attributes['service_id']
+                : null;
+        }
+
+        // Si la visite est déjà chargée
+        if ($this->relationLoaded('visite') && $this->visite) {
+            return $this->visite->service_id
+                ? (int) $this->visite->service_id
+                : null;
+        }
+
+        // Fallback : on charge la visite si besoin (OK pour usage modéré)
+        if ($this->visite) {
+            return $this->visite->service_id
+                ? (int) $this->visite->service_id
+                : null;
+        }
+
+        return null;
     }
 
     public function getEstSoldeeAttribute(): bool

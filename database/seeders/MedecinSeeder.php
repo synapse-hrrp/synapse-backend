@@ -6,6 +6,8 @@ use Illuminate\Database\Seeder;
 use Illuminate\Support\Str;
 use App\Models\Medecin;
 use App\Models\Personnel;
+use App\Models\Service;
+use App\Models\MedecinPlanning;
 
 class MedecinSeeder extends Seeder
 {
@@ -36,12 +38,15 @@ class MedecinSeeder extends Seeder
                 continue;
             }
 
-            Medecin::create([
+            $medecin = Medecin::create([
                 'personnel_id' => $personnel->id,
                 'numero_ordre' => $this->uniqueNumeroOrdre(),
                 'specialite'   => fake()->randomElement($specialites),
                 'grade'        => fake()->randomElement($grades),
             ]);
+
+            // ➕ Ajouts RDV: lier des services + planning par défaut
+            $this->attachServicesAndDefaultPlanning($medecin);
 
             $count++;
         }
@@ -52,7 +57,7 @@ class MedecinSeeder extends Seeder
 
         if ($availablePersonnelIds->count() > 0) {
             $p1 = $availablePersonnelIds->shift();
-            Medecin::firstOrCreate(
+            $med1 = Medecin::firstOrCreate(
                 ['personnel_id' => $p1],
                 [
                     'numero_ordre' => $this->uniqueNumeroOrdre('ORD-1001'), // tentera ORD-1001 sinon unique
@@ -60,11 +65,12 @@ class MedecinSeeder extends Seeder
                     'grade'        => 'Chef de service',
                 ]
             );
+            $this->attachServicesAndDefaultPlanning($med1);
         }
 
         if ($availablePersonnelIds->count() > 0) {
             $p2 = $availablePersonnelIds->shift();
-            Medecin::firstOrCreate(
+            $med2 = Medecin::firstOrCreate(
                 ['personnel_id' => $p2],
                 [
                     'numero_ordre' => $this->uniqueNumeroOrdre('ORD-1002'),
@@ -72,6 +78,7 @@ class MedecinSeeder extends Seeder
                     'grade'        => 'Assistant',
                 ]
             );
+            $this->attachServicesAndDefaultPlanning($med2);
         }
     }
 
@@ -88,12 +95,58 @@ class MedecinSeeder extends Seeder
 
         // Sinon, on génère de manière sûre un code unique
         do {
-            // Ex: ORD-5821 ou ORD-2025-AB12 (si tu préfères plus long, décommente la ligne suivante)
-            // $candidate = 'ORD-' . now()->format('Ymd') . '-' . strtoupper(Str::random(4));
+            // Ex: ORD-5821
             $candidate = 'ORD-' . fake()->numerify('####');
         } while (Medecin::where('numero_ordre', $candidate)->exists());
 
         return $candidate;
-        // NOTE: si la colonne numero_ordre est UNIQUE en base, c’est parfait.
+    }
+
+    /**
+     * Attache des services typiques au médecin (+ overrides pivot) et
+     * génère un planning par défaut (lun→ven 08–12 / 14–17) s’il est vide.
+     */
+    private function attachServicesAndDefaultPlanning(Medecin $medecin): void
+    {
+        // On accepte 'consultation' (singulier) ou 'consultations' (pluriel) selon ta base actuelle
+        $consultSlug = Service::whereIn('slug', ['consultation', 'consultations'])->value('slug');
+        $vaccinSlug  = Service::where('slug', 'vaccin')->value('slug');
+        $panseSlug   = Service::where('slug', 'pansement')->value('slug');
+
+        // Liaison pivot medecin_service (si les services existent)
+        $attach = [];
+        if ($consultSlug) {
+            $attach[$consultSlug] = ['is_active'=>true,'slot_duration'=>20,'capacity_per_slot'=>1];
+        }
+        if ($vaccinSlug) {
+            $attach[$vaccinSlug]  = ['is_active'=>true,'slot_duration'=>10,'capacity_per_slot'=>2];
+        }
+        if ($panseSlug) {
+            $attach[$panseSlug]   = ['is_active'=>true,'slot_duration'=>15,'capacity_per_slot'=>1];
+        }
+
+        if (!empty($attach)) {
+            $medecin->services()->syncWithoutDetaching($attach);
+        }
+
+        // Planning par défaut si vide
+        if (!$medecin->plannings()->exists()) {
+            $segments = [
+                // Lundi(1) à Vendredi(5): matin + aprem (20 min / cap 1 par défaut)
+                ['weekday'=>1,'start_time'=>'08:00','end_time'=>'12:00','slot_duration'=>20,'capacity_per_slot'=>1],
+                ['weekday'=>1,'start_time'=>'14:00','end_time'=>'17:00','slot_duration'=>20,'capacity_per_slot'=>1],
+                ['weekday'=>2,'start_time'=>'08:00','end_time'=>'12:00','slot_duration'=>20,'capacity_per_slot'=>1],
+                ['weekday'=>2,'start_time'=>'14:00','end_time'=>'17:00','slot_duration'=>20,'capacity_per_slot'=>1],
+                ['weekday'=>3,'start_time'=>'08:00','end_time'=>'12:00','slot_duration'=>20,'capacity_per_slot'=>1],
+                ['weekday'=>3,'start_time'=>'14:00','end_time'=>'17:00','slot_duration'=>20,'capacity_per_slot'=>1],
+                ['weekday'=>4,'start_time'=>'08:00','end_time'=>'12:00','slot_duration'=>20,'capacity_per_slot'=>1],
+                ['weekday'=>4,'start_time'=>'14:00','end_time'=>'17:00','slot_duration'=>20,'capacity_per_slot'=>1],
+                ['weekday'=>5,'start_time'=>'08:00','end_time'=>'12:00','slot_duration'=>20,'capacity_per_slot'=>1],
+                ['weekday'=>5,'start_time'=>'14:00','end_time'=>'17:00','slot_duration'=>20,'capacity_per_slot'=>1],
+            ];
+            foreach ($segments as $s) {
+                $medecin->plannings()->create($s + ['is_active'=>true]);
+            }
+        }
     }
 }

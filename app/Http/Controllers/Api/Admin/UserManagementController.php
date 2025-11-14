@@ -13,7 +13,7 @@ class UserManagementController extends Controller
 {
     /**
      * GET /api/v1/admin/users
-     * Liste paginée, recherche, filtre par rôle, sortie avec roles[] + personnel(+service)
+     * Liste paginée, recherche, filtre par rôle, sortie avec roles[] + personnel(+service) + service_ids
      */
     public function index(Request $request)
     {
@@ -22,6 +22,7 @@ class UserManagementController extends Controller
                 'roles:id,name',
                 'personnel:id,user_id,first_name,last_name,service_id,matricule,job_title',
                 'personnel.service:id,name',
+                'services:id,name', // 👈 services via pivot user_service
             ])
             ->select('id','name','email','phone','is_active','created_at')
             ->when($request->search, fn($qq, $s) => $qq->search($s))
@@ -35,13 +36,14 @@ class UserManagementController extends Controller
         $page->through(function (User $u) {
             return [
                 'id'         => $u->id,
-                'name'       => $u->name,   // alias affichage
+                'name'       => $u->name,
                 'email'      => $u->email,
                 'phone'      => $u->phone,
                 'is_active'  => $u->is_active,
                 'created_at' => $u->created_at,
                 'roles'      => $u->roles->pluck('name')->values(),
                 'is_admin'   => $u->hasAnyRole(['admin','dg']),
+
                 'personnel'  => $u->personnel ? [
                     'first_name' => $u->personnel->first_name,
                     'last_name'  => $u->personnel->last_name,
@@ -52,6 +54,20 @@ class UserManagementController extends Controller
                         'name' => $u->personnel->service->name,
                     ] : null,
                 ] : null,
+
+                // 👇 UTILISÉ PAR LE FRONT POUR LES CASES À COCHER
+                'service_ids' => $u->services
+                    ->pluck('id')
+                    ->map(fn ($id) => (int) $id)
+                    ->values(),
+
+                // (optionnel) si tu veux aussi les noms côté front
+                'services' => $u->services->map(function ($s) {
+                    return [
+                        'id'   => (int) $s->id,
+                        'name' => $s->name,
+                    ];
+                })->values(),
             ];
         });
 
@@ -65,9 +81,9 @@ class UserManagementController extends Controller
     public function store(Request $request)
     {
         $data = $request->validate([
-            'name'                  => ['required','string','max:255'], // alias affichage
+            'name'                  => ['required','string','max:255'],
             'email'                 => ['required','email','max:255','unique:users,email'],
-            'password'              => ['required', Password::min(8)],
+            'password'              => ['required', Password::min(8) ],
             'password_confirmation' => ['required','same:password'],
             'phone'                 => ['nullable','string','max:30'],
             'roles'                 => ['nullable','array'],
@@ -95,11 +111,9 @@ class UserManagementController extends Controller
         }
 
         // 3) Déterminer first/last non nuls pour Personnel
-        // a) si fournis
         $first = isset($data['first_name']) ? trim((string)$data['first_name']) : '';
         $last  = isset($data['last_name'])  ? trim((string)$data['last_name'])  : '';
 
-        // b) sinon, découper "name" de l'utilisateur
         if ($first === '' && $last === '') {
             $parts = array_values(array_filter(preg_split('/\s+/', trim($data['name']))));
             if (count($parts) >= 2) {
@@ -108,7 +122,6 @@ class UserManagementController extends Controller
             }
         }
 
-        // c) fallbacks durs pour éviter NULL si colonnes NOT NULL
         if ($first === '') $first = 'Prénom';
         if ($last  === '') $last  = 'Nom';
 
@@ -129,17 +142,31 @@ class UserManagementController extends Controller
             'roles:id,name',
             'personnel:id,user_id,first_name,last_name,service_id,matricule,job_title',
             'personnel.service:id,name',
+            'services:id,name',
         ]);
 
         return response()->json([
             'message' => 'Utilisateur créé',
-            'data'    => $user,
+            'data'    => [
+                'id'          => $user->id,
+                'name'        => $user->name,
+                'email'       => $user->email,
+                'phone'       => $user->phone,
+                'is_active'   => $user->is_active,
+                'roles'       => $user->roles->pluck('name')->values(),
+                'personnel'   => $user->personnel,
+                'service_ids' => $user->services->pluck('id')->map(fn($id)=>(int)$id)->values(),
+                'services'    => $user->services->map(fn($s)=>[
+                    'id'   => (int)$s->id,
+                    'name' => $s->name,
+                ])->values(),
+            ],
         ], 201);
     }
 
     /**
      * GET /api/v1/admin/users/{user}
-     * Détail d’un user (avec rôles + personnel + service)
+     * Détail d’un user (avec rôles + personnel + services)
      */
     public function show(User $user)
     {
@@ -147,9 +174,23 @@ class UserManagementController extends Controller
             'roles:id,name',
             'personnel:id,user_id,first_name,last_name,service_id,matricule,job_title',
             'personnel.service:id,name',
+            'services:id,name',
         ]);
 
-        return response()->json($user);
+        return response()->json([
+            'id'          => $user->id,
+            'name'        => $user->name,
+            'email'       => $user->email,
+            'phone'       => $user->phone,
+            'is_active'   => $user->is_active,
+            'roles'       => $user->roles->pluck('name')->values(),
+            'personnel'   => $user->personnel,
+            'service_ids' => $user->services->pluck('id')->map(fn($id)=>(int)$id)->values(),
+            'services'    => $user->services->map(fn($s)=>[
+                'id'   => (int)$s->id,
+                'name' => $s->name,
+            ])->values(),
+        ]);
     }
 
     /**
@@ -184,11 +225,25 @@ class UserManagementController extends Controller
             'roles:id,name',
             'personnel:id,user_id,first_name,last_name,service_id,matricule,job_title',
             'personnel.service:id,name',
+            'services:id,name',
         ]);
 
         return response()->json([
             'message' => 'Utilisateur mis à jour',
-            'data'    => $user,
+            'data'    => [
+                'id'          => $user->id,
+                'name'        => $user->name,
+                'email'       => $user->email,
+                'phone'       => $user->phone,
+                'is_active'   => $user->is_active,
+                'roles'       => $user->roles->pluck('name')->values(),
+                'personnel'   => $user->personnel,
+                'service_ids' => $user->services->pluck('id')->map(fn($id)=>(int)$id)->values(),
+                'services'    => $user->services->map(fn($s)=>[
+                    'id'   => (int)$s->id,
+                    'name' => $s->name,
+                ])->values(),
+            ],
         ]);
     }
 

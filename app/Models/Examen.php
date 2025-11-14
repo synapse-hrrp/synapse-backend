@@ -42,18 +42,16 @@ class Examen extends Model
 
     protected static function booted(): void
     {
-        // petit helper commun pour remplir depuis la tarification
-        $fillFromTarif = function (self $m): void {
+        /**
+         * Remplissage depuis la tarification
+         * @param self   $m
+         * @param bool   $force  Si true : remplace TOUJOURS nom/prix/devise par le tarif trouvé
+         */
+        $fillFromTarif = function (self $m, bool $force = false): void {
             // Normaliser le code si présent
             if ($m->code_examen) {
                 $m->code_examen = strtoupper(trim($m->code_examen));
             }
-
-            // On complète si nom/prix manquent
-            $needsName = empty($m->nom_examen);
-            $needsPrix = !isset($m->prix) || $m->prix === '' || (is_numeric($m->prix) && (float)$m->prix == 0.0);
-
-            if (! $needsName && ! $needsPrix) return;
 
             $tarifQ = \App\Models\Tarif::query()->actifs();
 
@@ -70,54 +68,129 @@ class Examen extends Model
             // 3) prend le plus récent actif correspondant
             $tarif = $tarifQ->latest('created_at')->first();
 
-            if ($tarif) {
-                if ($needsName) {
+            if (! $tarif) return;
+
+            if ($force) {
+                // On ECRASE pour refléter le nouveau tarif
+                $m->nom_examen = $tarif->libelle ?: $tarif->code;
+                $m->prix       = $tarif->montant;
+                $m->devise     = $tarif->devise ?: ($m->devise ?: 'XAF');
+            } else {
+                // On complète uniquement si manquants
+                if (empty($m->nom_examen)) {
                     $m->nom_examen = $tarif->libelle ?: $tarif->code;
                 }
+                $needsPrix = !isset($m->prix) || $m->prix === '' || (is_numeric($m->prix) && (float)$m->prix == 0.0);
                 if ($needsPrix) {
-                    $m->prix   = $tarif->montant;
+                    $m->prix = $tarif->montant;
                 }
-                // Devise par défaut depuis le tarif si non fournie
                 if (!$m->devise) {
                     $m->devise = $tarif->devise ?? 'XAF';
                 }
             }
         };
 
+        // --- CREATING ---
         static::creating(function (self $m) use ($fillFromTarif) {
-            if (!$m->id)           $m->id = (string) Str::uuid();
-            if (!$m->date_demande) $m->date_demande = now();
-            if (!$m->statut)       $m->statut = 'en_attente';
+            if (!$m->id)            $m->id = (string) Str::uuid();
+
+            // Date de demande TOUJOURS auto
+            $m->date_demande = now();
+
+            if (!$m->statut)        $m->statut = 'en_attente';
 
             // Origine explicite selon la présence d'un service
-            if (!$m->created_via)  $m->created_via  = $m->service_slug ? 'service' : 'labo';
+            $m->created_via  = $m->service_slug ? 'service' : 'labo';
+            $m->type_origine = $m->service_slug ? 'interne' : 'externe';
 
-            // Cohérence avec ancien champ
-            if (!$m->type_origine) $m->type_origine = $m->service_slug ? 'interne' : 'externe';
+            // Interne -> pas de prescripteur externe
+            if ($m->type_origine === 'interne') {
+                $m->prescripteur_externe = null;
+            }
 
             // Devise par défaut
-            if (!$m->devise)       $m->devise = 'XAF';
+            if (!$m->devise) $m->devise = 'XAF';
 
-            // 🔑 Remplir nom/prix/devise depuis Tarifs si besoin
-            $fillFromTarif($m);
+            // Remplir nom/prix/devise depuis Tarifs si besoin
+            $fillFromTarif($m, false);
+
+            // Date de validation auto selon statut
+            if ($m->statut === 'valide') {
+                $m->date_validation = now();
+            } else {
+                $m->date_validation = null;
+            }
         });
 
-        // Si on change le code ou le service à l’update, on peut recompléter si prix/nom manquent
+        // --- UPDATING ---
         static::updating(function (self $m) use ($fillFromTarif) {
-            if ($m->isDirty(['code_examen','service_slug','prix','nom_examen','devise'])) {
-                $fillFromTarif($m);
+
+            // Si on change le service ou le code examen -> FORCER la synchro tarif (remplacer prix/devise/nom)
+            if ($m->isDirty(['service_slug']) || $m->isDirty(['code_examen'])) {
+                $fillFromTarif($m, true);
+            } else {
+                // Sinon, compléter au besoin (si manquants)
+                if ($m->isDirty(['prix','nom_examen','devise'])) {
+                    $fillFromTarif($m, false);
+                }
+            }
+
+            // Recalcule origine et created_via selon service
+            $m->created_via  = $m->service_slug ? 'service' : 'labo';
+            $m->type_origine = $m->service_slug ? 'interne' : 'externe';
+
+            // Interne -> nettoyer prescripteur_externe
+            if ($m->type_origine === 'interne') {
+                $m->prescripteur_externe = null;
+            }
+
+            // Dates auto selon statut
+            if ($m->isDirty('statut')) {
+                if ($m->statut === 'valide') {
+                    $m->date_validation = now();
+                } else {
+                    $m->date_validation = null;
+                }
             }
         });
     }
 
-    /** Relations */
-    public function patient()     { return $this->belongsTo(Patient::class); }
-    public function service()     { return $this->belongsTo(Service::class, 'service_slug', 'slug'); }
-    public function demandeur()   { return $this->belongsTo(Medecin::class, 'demande_par'); }
-    public function validateur()  { return $this->belongsTo(Personnel::class, 'valide_par'); }
-    public function creator()     { return $this->belongsTo(User::class, 'created_by_user_id'); }
+    /** --------- Relations --------- */
 
-    /** Scopes pratiques */
+    public function patient()
+    {
+        return $this->belongsTo(Patient::class, 'patient_id');
+    }
+
+    public function service()
+    {
+        return $this->belongsTo(Service::class, 'service_slug', 'slug');
+    }
+
+    // Demandeur = médecin (clé étrangère sur medecins.id)
+    public function demandeur()
+    {
+        return $this->belongsTo(Medecin::class, 'demande_par');
+    }
+
+    // Validateur = personnel
+    public function validateur()
+    {
+        return $this->belongsTo(Personnel::class, 'valide_par');
+    }
+
+    public function creator()
+    {
+        return $this->belongsTo(User::class, 'created_by_user_id');
+    }
+
+    // Facture
+    public function facture()
+    {
+        return $this->belongsTo(Facture::class, 'facture_id');
+    }
+
+    /** --------- Scopes pratiques --------- */
     public function scopeFromService($q) { return $q->where('created_via', 'service'); }
     public function scopeFromLabo($q)    { return $q->where('created_via', 'labo'); }
     public function scopeForService($q, ?string $slug)

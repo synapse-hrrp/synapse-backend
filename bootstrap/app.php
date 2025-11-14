@@ -18,7 +18,7 @@ return Application::configure(basePath: dirname(__DIR__))
             \Illuminate\Routing\Middleware\SubstituteBindings::class,
         ]);
 
-        // Alias globaux (incl. Spatie)
+        // Alias globaux (incl. Spatie + Sanctum + Caisse)
         $middleware->alias([
             'auth'               => \App\Http\Middleware\Authenticate::class,
             'auth.basic'         => \Illuminate\Auth\Middleware\AuthenticateWithBasicAuth::class,
@@ -36,9 +36,15 @@ return Application::configure(basePath: dirname(__DIR__))
             'role_or_permission' => \Spatie\Permission\Middleware\RoleOrPermissionMiddleware::class,
 
             // Sanctum abilities
-            'abilities' => \Laravel\Sanctum\Http\Middleware\CheckAbilities::class,
-            'ability'   => \Laravel\Sanctum\Http\Middleware\CheckForAnyAbility::class,
+            'abilities'          => \Laravel\Sanctum\Http\Middleware\CheckAbilities::class,
+            'ability'            => \Laravel\Sanctum\Http\Middleware\CheckForAnyAbility::class,
 
+            // 🚀 Aliases CAISSE (ceux qui manquaient)
+            'cashbox.open'       => \App\Http\Middleware\EnsureCashSessionOpen::class,
+            'cashbox.service'    => \App\Http\Middleware\EnsurePaymentServiceScope::class,
+
+            // (Optionnel si tu as ce middleware)
+            // 'service.access'   => \App\Http\Middleware\EnsureServiceAccess::class,
         ]);
     })
     ->withExceptions(function (Exceptions $exceptions) {

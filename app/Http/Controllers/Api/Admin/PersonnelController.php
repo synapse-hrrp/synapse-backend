@@ -5,6 +5,8 @@ namespace App\Http\Controllers\Api\Admin;
 use App\Http\Controllers\Controller;
 use App\Models\Personnel;
 use Illuminate\Http\Request;
+use Illuminate\Support\Facades\Storage;
+use Illuminate\Validation\ValidationException;
 
 class PersonnelController extends Controller
 {
@@ -19,7 +21,7 @@ class PersonnelController extends Controller
         $perPage  = (int) $request->query('per_page', 10);
         $perPage  = max(1, min($perPage, 100));
 
-        $query = Personnel::query()->with(['user:id,name,email', 'service:id,name']);
+        $query = Personnel::query()->with(['user:id,name,email', 'service:id,name,slug']);
 
         if (!empty($userId))   $query->where('user_id', $userId);
         if (!empty($service))  $query->where('service_id', $service);
@@ -41,6 +43,18 @@ class PersonnelController extends Controller
         return response()->json(
             $query->orderByDesc('created_at')->paginate($perPage)
         );
+    }
+
+    /**
+     * GET /api/v1/admin/personnels/by-user/{user_id}
+     */
+    public function byUser(int $user_id)
+    {
+        $p = Personnel::with(['user:id,name,email', 'service:id,name,slug'])
+            ->where('user_id', $user_id)
+            ->firstOrFail();
+
+        return response()->json(['data' => $p]);
     }
 
     /**
@@ -78,14 +92,13 @@ class PersonnelController extends Controller
 
         // Attribuer le rôle automatique selon le service si roles non fournis
         $serviceRoleMap = [
-            'laboratoire' => 'laborantin',
-            'pharmacie'   => 'pharmacien',
-            'finance'     => 'caissier',
-            'consultations' => 'medecin',
-            'accueil'   => 'reception',
-            'pansement'   => 'infirmier',
+            'laboratoire'    => 'laborantin',
+            'pharmacie'      => 'pharmacien',
+            'finance'        => 'caissier',
+            'consultations'  => 'medecin',
+            'accueil'        => 'reception',
+            'pansement'      => 'infirmier',
             'gestion-malade' => 'gestionnaire',
-            // tu peux compléter selon les services et rôles existants
         ];
 
         $user = $p->user;
@@ -103,7 +116,7 @@ class PersonnelController extends Controller
 
         return response()->json([
             'message' => 'Personnel créé',
-            'data'    => $p->load(['user:id,name,email','service:id,name']),
+            'data'    => $p->load(['user:id,name,email','service:id,name,slug']),
         ], 201);
     }
 
@@ -141,6 +154,8 @@ class PersonnelController extends Controller
             'roles.*'       => ['string','exists:roles,name'],
             'permissions'   => ['sometimes','array'],
             'permissions.*' => ['string','exists:permissions,name'],
+            // autoriser la mise à jour via PATCH si tu envoies avatar_path depuis le front
+            'avatar_path'   => ['sometimes','nullable','string','max:255'],
         ])->validate();
 
         $roles       = $validated['roles'] ?? null;
@@ -150,12 +165,12 @@ class PersonnelController extends Controller
         $personnel->update($validated);
 
         $serviceRoleMap = [
-            'laboratoire' => 'laborantin',
-            'pharmacie'   => 'pharmacien',
-            'finance'     => 'caissier',
-            'consultations' => 'medecin',
-            'reception'   => 'reception',
-            'pansement'   => 'infirmier',
+            'laboratoire'    => 'laborantin',
+            'pharmacie'      => 'pharmacien',
+            'finance'        => 'caissier',
+            'consultations'  => 'medecin',
+            'reception'      => 'reception',
+            'pansement'      => 'infirmier',
             'gestion-malade' => 'gestionnaire',
         ];
 
@@ -174,18 +189,17 @@ class PersonnelController extends Controller
 
         return response()->json([
             'message' => 'Personnel modifié',
-            'data'    => $personnel->load(['user:id,name,email','service:id,name']),
+            'data'    => $personnel->load(['user:id,name,email','service:id,name,slug']),
         ]);
     }
 
-    // Les autres méthodes show() et destroy() restent inchangées
-        /**
+    /**
      * GET /api/v1/admin/personnels/{personnel}
      */
     public function show(Personnel $personnel)
     {
         return response()->json(
-            $personnel->load(['user:id,name,email', 'service:id,name'])
+            $personnel->load(['user:id,name,email', 'service:id,name,slug'])
         );
     }
 
@@ -201,4 +215,85 @@ class PersonnelController extends Controller
         ]);
     }
 
+    /**
+     * POST /api/v1/admin/personnels/{personnel}/avatar
+     * Champ attendu: 'file' (image)
+     */
+    public function uploadAvatar(Request $request, Personnel $personnel)
+    {
+        try {
+            $data = $request->validate([
+                'file' => ['required','file','image','mimes:jpg,jpeg,png,webp','max:5120'], // 5MB
+            ]);
+
+            // Choix du disque
+            $disk = config('filesystems.default', 'public');
+            if (!in_array($disk, ['public','s3'])) {
+                $disk = 'public';
+            }
+
+            $folder = 'avatars/personnels/'.$personnel->id;
+            $path = Storage::disk($disk)->putFile($folder, $data['file']); // ex: avatars/personnels/22/xxx.jpg
+            if (!$path) {
+                return response()->json(['message' => 'Impossible de stocker le fichier'], 500);
+            }
+
+            $isS3 = $disk === 's3';
+            $publicUrl = $isS3
+                ? Storage::disk('s3')->url($path)
+                : url('/storage/'.ltrim($path,'/'));
+
+            // Sauvegarder le chemin (préférer un chemin « utilisable » par le front)
+            $personnel->avatar_path = $isS3 ? $publicUrl : '/storage/'.ltrim($path,'/');
+            $personnel->save();
+
+            return response()->json([
+                'ok'          => true,
+                'avatar_path' => $personnel->avatar_path, // ex: /storage/avatars/personnels/22/xxx.jpg
+                'avatar_url'  => $publicUrl,              // URL absolue
+            ], 201);
+
+        } catch (ValidationException $ve) {
+            return response()->json([
+                'message' => 'Validation error',
+                'errors'  => $ve->errors(),
+            ], 422);
+        } catch (\Throwable $e) {
+            \Log::error('Upload avatar failed', [
+                'personnel_id' => $personnel->id,
+                'error' => $e->getMessage(),
+            ]);
+            return response()->json(['message' => 'Upload avatar failed'], 500);
+        }
+    }
+
+    /**
+     * DELETE /api/v1/admin/personnels/{personnel}/avatar
+     */
+    public function deleteAvatar(Personnel $personnel)
+    {
+        try {
+            if ($personnel->avatar_path) {
+                // si c'est /storage/xxx -> supprimer le fichier physique du disque 'public'
+                if (str_starts_with($personnel->avatar_path, '/storage/')) {
+                    $disk = 'public';
+                    $relative = ltrim(substr($personnel->avatar_path, strlen('/storage/')), '/'); // avatars/...
+                    if (Storage::disk($disk)->exists($relative)) {
+                        Storage::disk($disk)->delete($relative);
+                    }
+                }
+            }
+
+            $personnel->avatar_path = null;
+            $personnel->save();
+
+            return response()->json(['ok' => true]);
+        } catch (\Throwable $e) {
+            \Log::error('Delete avatar failed', [
+                'personnel_id' => $personnel->id,
+                'error' => $e->getMessage(),
+            ]);
+            return response()->json(['message' => 'Delete avatar failed'], 500);
+        }
+    }
 }

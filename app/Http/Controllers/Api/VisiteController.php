@@ -8,7 +8,7 @@ use App\Http\Requests\VisiteStoreRequest;
 use App\Http\Requests\VisiteUpdateRequest;
 use App\Http\Resources\VisiteResource;
 use App\Models\Visite;
-use App\Models\Personnel;
+use App\Models\Medecin;
 use App\Models\Service;
 use App\Models\Tarif;
 use Illuminate\Http\Request;
@@ -50,7 +50,7 @@ class VisiteController extends Controller
 
         // 0) Service doit exister & être actif (optionnel mais utile)
         if (! empty($data['service_id'])) {
-            $service = Service::query()->select(['slug','is_active'])->whereKey($data['service_id'])->first();
+            $service = Service::query()->select(['slug','is_active','config'])->whereKey($data['service_id'])->first();
             if (! $service) {
                 return response()->json(['message' => 'Service introuvable'], 422);
             }
@@ -59,6 +59,14 @@ class VisiteController extends Controller
             }
             // si pas déjà résolu via slug plus haut
             $selectedServiceSlug = $selectedServiceSlug ?: $service->slug;
+
+            // (Optionnel) si la config exige un médecin pour le détail, s'assurer d'en avoir un
+            $cfg = (array)($service->config ?? []);
+            if (!empty($cfg['require_doctor_for_detail']) && empty($data['medecin_id'])) {
+                return response()->json([
+                    'message' => "Un médecin est requis pour le service « {$service->slug} »."
+                ], 422);
+            }
         }
 
         // 1) Récupérer le Personnel de l'utilisateur connecté (agent)
@@ -68,15 +76,14 @@ class VisiteController extends Controller
                 'message' => 'Aucun personnel rattaché à l’utilisateur connecté.'
             ], 422);
         }
-        $data['agent_id']  = $agentPersonnel->id;
-        $data['agent_nom'] = $agentPersonnel->full_name
-            ?? trim(($agentPersonnel->first_name ?? '').' '.($agentPersonnel->last_name ?? ''));
+        // NB: agent_id = user_id (tu peux changer si tu stockes l'id du personnel)
+        $data['agent_id']  = $request->user()->id;
+        $data['agent_nom'] = trim(($agentPersonnel->first_name ?? '').' '.($agentPersonnel->last_name ?? ''));
 
-        // 2) Snapshot du médecin (optionnel)
+        // 2) Snapshot du médecin (optionnel) — via Medecin->personnel
         if (!empty($data['medecin_id'])) {
-            $medecin = Personnel::query()->whereKey($data['medecin_id'])->firstOrFail();
-            $data['medecin_nom'] = $medecin->full_name
-                ?? trim(($medecin->first_name ?? '').' '.($medecin->last_name ?? ''));
+            $med = Medecin::with('personnel:id,first_name,last_name')->findOrFail($data['medecin_id']);
+            $data['medecin_nom'] = trim(($med->personnel->first_name ?? '').' '.($med->personnel->last_name ?? '')) ?: null;
         } else {
             $data['medecin_nom'] = $data['medecin_nom'] ?? null;
         }
@@ -158,8 +165,8 @@ class VisiteController extends Controller
             event(new VisiteCreated($visite->id, $userId));
         });
 
-        // Charger les relations
-        $with = ['patient','service','medecin','agent','tarif'];
+        // Charger les relations (→ inclut 'facture' pour exposer le numéro)
+        $with = ['patient','service','medecin','agent','tarif','facture'];
         if (method_exists(Visite::class, 'affectation')) {
             $with[] = 'affectation';
         }
@@ -174,7 +181,7 @@ class VisiteController extends Controller
             return response()->json(['message'=>'Forbidden: visites.read requis'], 403);
         }
 
-        $with = ['patient','service','medecin','agent','tarif'];
+        $with = ['patient','service','medecin','agent','tarif','facture'];
         if (method_exists(Visite::class, 'affectation')) {
             $with[] = 'affectation';
         }
@@ -215,7 +222,7 @@ class VisiteController extends Controller
             return response()->json(['message'=>'Forbidden: visites.read requis'], 403);
         }
 
-        $with = ['patient','service','medecin','agent','tarif'];
+        $with = ['patient','service','medecin','agent','tarif','facture'];
         if (method_exists(Visite::class, 'affectation')) {
             $with[] = 'affectation';
         }
@@ -276,17 +283,12 @@ class VisiteController extends Controller
                 }
             }
         }
-        // 2) Snapshot du médecin (obligatoire)
-        if (!empty($data['medecin_id'])) {
-            $medecin = Personnel::query()->whereKey($data['medecin_id'])->firstOrFail();
-            $data['medecin_nom'] = $medecin->full_name
-                ?? trim(($medecin->first_name ?? '').' '.($medecin->last_name ?? ''));
-        } else {
-            return response()->json([
-                'message' => "Impossible de créer la visite : un médecin est requis."
-            ], 422);
-        }
 
+        // Snapshot du médecin si fourni (via Medecin->personnel)
+        if (!empty($data['medecin_id'])) {
+            $med = Medecin::with('personnel:id,first_name,last_name')->findOrFail($data['medecin_id']);
+            $data['medecin_nom'] = trim(($med->personnel->first_name ?? '').' '.($med->personnel->last_name ?? '')) ?: null;
+        }
 
         // Ne mettre à jour que les colonnes existantes
         $columns = Schema::getColumnListing('visites');
@@ -294,7 +296,7 @@ class VisiteController extends Controller
 
         $v->fill($data)->save();
 
-        $with = ['patient','service','medecin','agent','tarif'];
+        $with = ['patient','service','medecin','agent','tarif','facture'];
         if (method_exists(Visite::class, 'affectation')) {
             $with[] = 'affectation';
         }

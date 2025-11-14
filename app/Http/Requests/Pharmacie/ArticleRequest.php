@@ -19,6 +19,13 @@ class CartLine extends Model
         'tax_rate'   => 'decimal:2',
     ];
 
-    public function cart()    { return $this->belongsTo(Cart::class, 'cart_id'); }
-    public function article() { return $this->belongsTo(Article::class, 'article_id'); }
+    public function cart()
+    {
+        return $this->belongsTo(PharmaCart::class, 'cart_id');
+    }
+
+    public function article()
+    {
+        return $this->belongsTo(PharmaArticle::class, 'article_id'); // ✅ correction
+    }
 }

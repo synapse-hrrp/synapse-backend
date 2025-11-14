@@ -1,4 +1,4 @@
-<?php
+<?php 
 
 namespace Database\Seeders;
 
@@ -15,7 +15,7 @@ class ServiceSeeder extends Seeder
 {
     public function run(): void
     {
-        // 1) Services
+        // 1) Services (activés) — on conserve ta liste et on force is_active=true
         $items = [
             ['slug'=>'reception',       'name'=>'Accueil / Réception'],
             ['slug'=>'consultations',   'name'=>'Consultations'],
@@ -40,18 +40,35 @@ class ServiceSeeder extends Seeder
         ];
 
         foreach ($items as $it) {
-            Service::firstOrCreate(['slug' => $it['slug']], ['name' => $it['name']]);
+            Service::updateOrCreate(
+                ['slug' => $it['slug']],
+                ['name' => $it['name'], 'is_active'=>true, 'config'=>Service::where('slug',$it['slug'])->value('config') ?? []]
+            );
         }
 
-        // 2) Rôles (guard 'web')
+        // 👉 Ajouts pour le module RDV : créer les slugs “consultation” (singulier) et “vaccin” si absents
+        //    - ton code RDV peut utiliser 'consultation' OU 'consultations'
+        $rdvExtras = [
+            ['slug'=>'consultation', 'name'=>'Consultation'],
+            ['slug'=>'vaccin',       'name'=>'Vaccination'],
+        ];
+        foreach ($rdvExtras as $it) {
+            Service::firstOrCreate(
+                ['slug'=>$it['slug']],
+                ['name'=>$it['name'],'is_active'=>true,'config'=>[]]
+            );
+        }
+
+        // 2) Rôles (guard 'web') — on AJOUTE les 3 caisses ici (conservé)
         $guard = 'web';
-        foreach (['reception','medecin','infirmier','laborantin','pharmacien','caissier','gestionnaire','admin','superuser'] as $r) {
+        $baseRoles = ['reception','medecin','infirmier','laborantin','pharmacien','caissier','gestionnaire','admin','superuser'];
+        $cashRoles = ['caissier_service','caissier_general','admin_caisse']; // ← ajout
+        foreach (array_merge($baseRoles, $cashRoles) as $r) {
             Role::firstOrCreate(['name' => $r, 'guard_name' => $guard]);
         }
 
-        // 3) Comptes par service (+ liaison Personnel)
+        // 3) Comptes par service (+ liaison Personnel) — inchangé, on force le service actif
         $map = [
-            // ⚠️ Clé alignée avec le slug créé ci-dessus: 'reception' (et non 'accueil')
             'reception'      => ['Reception',       'reception',   'accueil@hopital.cg',       '+242060000010'],
             'consultations'  => ['Consultations',   'medecin',     'consultations@hopital.cg', '+242060000020'],
             'medecine'       => ['Médecine',        'medecin',     'medecine@hopital.cg',      '+242060000021'],
@@ -75,7 +92,6 @@ class ServiceSeeder extends Seeder
         ];
 
         foreach ($map as $slug => [$label, $role, $email, $phone]) {
-            // Crée / met à jour l'utilisateur du service
             $user = User::updateOrCreate(
                 ['email' => $email],
                 [
@@ -89,11 +105,9 @@ class ServiceSeeder extends Seeder
 
             $user->syncRoles([$role]);
 
-            // Trouve le service par slug
             $service = Service::where('slug', $slug)->first();
-
             if ($service) {
-                // Laisse le modèle générer le matricule à la création via le hook "creating"
+                $service->update(['is_active'=>true]); // s’assure qu’il est actif
                 Personnel::updateOrCreate(
                     ['user_id' => $user->id],
                     [
@@ -101,10 +115,30 @@ class ServiceSeeder extends Seeder
                         'last_name'  => 'Agent',
                         'job_title'  => Str::title($role),
                         'service_id' => $service->id,
-                        // NE PAS passer 'matricule' ici : il est auto-généré à la création
                     ]
                 );
             }
+        }
+
+        // 4) Comptes spécifiques "types de caisse" (AUCUN service associé ici) — inchangé
+        $caisseUsers = [
+            ['role' => 'caissier_service', 'email' => 'caisse.service@hopital.cg',  'name' => 'Caissier Service',  'phone' => '+242060000101'],
+            ['role' => 'caissier_general', 'email' => 'caisse.general@hopital.cg',  'name' => 'Caissier Général',  'phone' => '+242060000102'],
+            ['role' => 'admin_caisse',     'email' => 'admin.caisse@hopital.cg',    'name' => 'Admin Caisse',      'phone' => '+242060000103'],
+        ];
+
+        foreach ($caisseUsers as $u) {
+            $user = User::updateOrCreate(
+                ['email' => $u['email']],
+                [
+                    'name'              => $u['name'],
+                    'password'          => Hash::make('ChangeMoi#2025'),
+                    'is_active'         => true,
+                    'email_verified_at' => now(),
+                    'phone'             => $u['phone'],
+                ]
+            );
+            $user->syncRoles([$u['role']]);
         }
     }
 }

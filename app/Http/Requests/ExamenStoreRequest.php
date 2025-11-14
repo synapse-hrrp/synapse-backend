@@ -27,38 +27,46 @@ class ExamenStoreRequest extends FormRequest
                 : ['prohibited'],
 
             // Infos médicales
-            'prelevement'  => ['nullable','string','max:255'],
-            'demande_par'  => ['nullable','integer','exists:medecins,id'],
-            'date_demande' => ['nullable','date'],
+            // ✅ "Demandé par" = ID d’un MÉDECIN
+            'demande_par'            => ['nullable','integer','exists:medecins,id'],
+            // ❌ auto côté back → on l'interdit ici
+            'date_demande'           => ['prohibited'],
+            'prelevement'            => ['nullable','string','max:255'],
 
             // Résultats (optionnels)
-            'valeur_resultat'      => ['nullable','string','max:255'],
-            'unite'                => ['nullable','string','max:255'],
-            'intervalle_reference' => ['nullable','string','max:255'],
-            'resultat_json'        => ['nullable','array'],
+            'valeur_resultat'        => ['nullable','string','max:255'],
+            'unite'                  => ['nullable','string','max:255'],
+            'intervalle_reference'   => ['nullable','string','max:255'],
+            'resultat_json'          => ['nullable','array'],
 
-            // Statut
-            'statut' => ['nullable', Rule::in(['en_attente','en_cours','termine','valide'])],
+            // Statut (par défaut: en_attente, mais on n'interdit pas si fourni)
+            'statut'                 => ['nullable', Rule::in(['en_attente','en_cours','termine','valide'])],
 
             // Tarification labo (facultative)
-            'tarif_id'   => $hasTarifs ? ['nullable','uuid','exists:tarifs,id'] : ['prohibited'],
-            'tarif_code' => $hasTarifs ? ['nullable','string','max:50']         : ['prohibited'],
+            'tarif_id'               => $hasTarifs ? ['nullable','uuid','exists:tarifs,id'] : ['prohibited'],
+            'tarif_code'             => $hasTarifs ? ['nullable','string','max:50']         : ['prohibited'],
 
             // Libellés d'examen (indépendants de la tarification)
-            'code_examen' => ['nullable','string','max:255'],
-            'nom_examen'  => ['nullable','string','max:255'],
+            'code_examen'            => ['nullable','string','max:255'],
+            'nom_examen'             => ['nullable','string','max:255'],
 
-            // Prix manuel (seulement si pas de tarif)
-            'prix'   => ['nullable','numeric','min:0','prohibited_with:tarif_id,tarif_code'],
-            'devise' => ['nullable','string','size:3','prohibited_with:tarif_id,tarif_code'],
+            // Prix manuel (si PAS de tarif)
+            'prix'                   => ['nullable','numeric','min:0'],
+            'devise'                 => ['nullable','string','size:3'],
 
-            // Champs système gérés ailleurs
-            'type_origine'        => ['prohibited'],
-            'facture_id'          => ['prohibited'],
-            'valide_par'          => ['prohibited'],
-            'date_validation'     => ['prohibited'],
-            'created_via'         => ['prohibited'],
-            'created_by_user_id'  => ['prohibited'],
+            // Prescripteur externe :
+            // - requis si demande EXTERNE (i.e. pas de service_slug)
+            // - ignoré si demande interne (service_slug présent)
+            'prescripteur_externe'   => ['nullable','string','max:255','required_without:service_slug'],
+
+            // Autres champs système gérés ailleurs / auto
+            'type_origine'           => ['prohibited'],
+            'facture_id'             => ['prohibited'],
+            'valide_par'             => ['prohibited'],
+            'date_validation'        => ['prohibited'],
+            'created_via'            => ['prohibited'],
+            'created_by_user_id'     => ['prohibited'],
+            'reference_demande'      => ['nullable','string','max:255'],
         ];
     }
 
@@ -69,12 +77,25 @@ class ExamenStoreRequest extends FormRequest
         $codeExam  = $this->code_examen !== null ? strtoupper(trim($this->code_examen)) : null;
         $devise    = $this->devise      !== null ? strtoupper(trim($this->devise)) : null;
 
+        // Si pas de devise mais PRIX manuel présent, on met XAF par défaut
+        $prix = $this->prix;
+        if (($prix !== null && $prix !== '') && ($devise === null || $devise === '')) {
+            $devise = 'XAF';
+        }
+
+        // Si service_slug présent (demande INTERNE), on ignore prescripteur_externe
+        $prescripteur = $slug
+            ? null
+            : ($this->prescripteur_externe !== null ? trim($this->prescripteur_externe) : null);
+
         $this->merge([
-            'service_slug' => $slug,
-            'tarif_code'   => $tarifCode,
-            'code_examen'  => $codeExam,
-            'devise'       => $devise,
-            'demande_par'  => $this->demande_par !== null ? (int) $this->demande_par : null,
+            'service_slug'         => $slug,
+            'tarif_code'           => $tarifCode,
+            'code_examen'          => $codeExam,
+            'devise'               => $devise,
+            'prescripteur_externe' => $prescripteur,
+            // "Demandé par" est un MÉDECIN id (force en int si fourni)
+            'demande_par'          => $this->demande_par !== null ? (int) $this->demande_par : null,
         ]);
     }
 
@@ -84,18 +105,27 @@ class ExamenStoreRequest extends FormRequest
             $tarifId   = $this->input('tarif_id');
             $tarifCode = $this->input('tarif_code') ? strtoupper(trim($this->input('tarif_code'))) : null;
             $prix      = $this->input('prix');
+            $devise    = $this->input('devise');
 
             $hasTarif = (bool) ($tarifId || $tarifCode);
             $hasPrix  = ($prix !== null && $prix !== '');
 
-            // Exiger une source de prix (tarif OU prix manuel)
+            // 1) Exiger une source de prix (tarif OU prix manuel)
             if (!$hasTarif && !$hasPrix) {
-                $validator->errors()->add('tarif_code', "Indiquez un tarif labo (tarif_id ou tarif_code) ou un prix manuel.");
+                $validator->errors()->add('tarif_code', "Indiquez un tarif labo (tarif_id ou tarif_code) OU un prix manuel.");
                 return;
             }
 
-            // Si tarif → vérifier qu'il est bien rattaché à un service de labo
+            // 2) Si tarif → interdire prix/devise manuels
             if ($hasTarif) {
+                if ($hasPrix) {
+                    $validator->errors()->add('prix', "Interdit lorsque vous sélectionnez un tarif.");
+                }
+                if (!empty($devise)) {
+                    $validator->errors()->add('devise', "Interdit lorsque vous sélectionnez un tarif.");
+                }
+
+                // Vérifier que le tarif appartient bien à un service labo
                 $labSlugs = config('billing.lab_service_slugs', ['laboratoire','labo','examens']);
 
                 if ($tarifId) {
@@ -125,6 +155,11 @@ class ExamenStoreRequest extends FormRequest
                         return;
                     }
                 }
+            } else {
+                // 3) Pas de tarif → exiger PRIX (devise a été par défaut à XAF si manquante)
+                if (!$hasPrix) {
+                    $validator->errors()->add('prix', "Le prix est requis si aucun tarif n'est sélectionné.");
+                }
             }
         });
     }
@@ -132,23 +167,25 @@ class ExamenStoreRequest extends FormRequest
     public function attributes(): array
     {
         return [
-            'patient_id'     => 'patient',
-            'service_slug'   => 'service demandeur',
-            'tarif_id'       => 'tarif',
-            'tarif_code'     => 'code de tarification',
-            'code_examen'    => "code de l'examen",
-            'nom_examen'     => "nom de l'examen",
-            'prix'           => 'prix',
-            'devise'         => 'devise',
+            'patient_id'           => 'patient',
+            'service_slug'         => 'service demandeur',
+            'tarif_id'             => 'tarif',
+            'tarif_code'           => 'code de tarification',
+            'code_examen'          => "code de l'examen",
+            'nom_examen'           => "nom de l'examen",
+            'prix'                 => 'prix',
+            'devise'               => 'devise',
+            'prescripteur_externe' => 'prescripteur externe',
         ];
     }
 
     public function messages(): array
     {
         return [
-            'patient_id.uuid'     => "Le patient_id doit être un UUID valide.",
-            'patient_id.exists'   => "Le patient spécifié est introuvable.",
-            'service_slug.exists' => "Le service spécifié (slug) est introuvable.",
+            'patient_id.uuid'         => "Le patient_id doit être un UUID valide.",
+            'patient_id.exists'       => "Le patient spécifié est introuvable.",
+            'service_slug.exists'     => "Le service spécifié (slug) est introuvable.",
+            'prescripteur_externe.required_without' => "Le prescripteur externe est requis pour une demande externe.",
         ];
     }
 }

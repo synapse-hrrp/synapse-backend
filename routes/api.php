@@ -11,6 +11,7 @@ use App\Http\Controllers\IncomingController;
 use App\Http\Controllers\Api\LookupController;
 use App\Http\Controllers\Api\ExamenController;
 
+use App\Http\Controllers\Api\Admin\UserRoleController; // ⬅️ contrôleur utilisé pour roles/services
 
 use App\Http\Controllers\Api\ConsultationController;
 use App\Http\Controllers\Api\PatientController;
@@ -24,10 +25,9 @@ use App\Http\Controllers\Api\FactureController;
 use App\Http\Controllers\Api\FactureLigneController;
 use App\Http\Controllers\Api\ReglementController;
 use App\Http\Controllers\Api\FactureItemController;
+
 // ── Controller Tarif ──────────────────────────────────────────────────────
 use App\Http\Controllers\Api\TarifController;
-
-
 
 // Finance “module” (invoices / payments)
 use App\Http\Controllers\Api\Finance\InvoiceController;
@@ -47,8 +47,8 @@ use App\Http\Controllers\Api\EchographieController;
 use App\Http\Controllers\Api\BilletSortieController;
 use App\Http\Controllers\Api\DeclarationNaissanceController;
 use App\Http\Controllers\Api\HospitalisationController;
-
-
+use App\Http\Controllers\Api\PlanningController;
+use App\Http\Controllers\Api\RendezVousController;
 
 
 // AJOUT INVENTAIRE LABO
@@ -58,13 +58,18 @@ use App\Http\Controllers\Api\StockMovementController;
 use App\Http\Controllers\Api\LocationController;
 use App\Http\Controllers\Api\ReportController;
 
-//Ajout pharmacie
+// Ajout pharmacie
 use App\Http\Controllers\Api\Pharma\DciController;
 use App\Http\Controllers\Api\Pharma\ArticleController;
 use App\Http\Controllers\Api\Pharma\StockController;
 use App\Http\Controllers\Api\Pharma\CartController;
 
-
+// Ajout Caisse
+use App\Http\Controllers\Api\Caisse\CashSessionController;
+use App\Http\Controllers\Api\Caisse\CashReportController;
+use App\Http\Controllers\Api\Caisse\CashRegisterSessionController;
+use App\Http\Controllers\Api\Caisse\CashAuditController; 
+use App\Http\Controllers\Api\Admin\UserServiceController;
 
 Route::prefix('v1')->group(function () {
 
@@ -76,9 +81,19 @@ Route::prefix('v1')->group(function () {
         Route::get('auth/me',      [AuthController::class, 'me']);
     });
 
-   // ── Admin (/api/v1/admin) ─────────────────────────────
-   Route::prefix('admin')
-    ->middleware(['auth:sanctum','throttle:auth','role:admin'])
+    /* =====================================================================
+     *  🔧 Routes d’affectation (rôles & services) compatibles avec le front
+     *  - Autorisation fine gérée DANS le contrôleur (admin|admin_caisse|roles.assign)
+     *  - On ne met PAS de 'role_or_permission' ou 'can:...' ici pour éviter 403/404
+     * ===================================================================== */
+    Route::prefix('admin')->middleware(['auth:sanctum','throttle:auth'])->group(function () {
+        Route::post('/users/{user}/roles',    [UserRoleController::class, 'syncRoles'])->name('v1.admin.users.roles.sync');
+        Route::post('/users/{user}/services', [UserServiceController::class, 'sync'])->name('v1.admin.users.services.sync');
+    });
+
+    // ── Admin (/api/v1/admin) ─────────────────────────────
+    Route::prefix('admin')
+        ->middleware(['auth:sanctum','throttle:auth','role:admin'])
         ->group(function () {
             // Users
             Route::apiResource('users', UserManagementController::class)
@@ -92,15 +107,14 @@ Route::prefix('v1')->group(function () {
             Route::get('personnels/by-user/{user_id}', [PersonnelController::class, 'byUser'])
                 ->name('v1.personnels.by_user');
 
-            // ✅ Endpoints avatar dédiés (AJOUT)
+            // Endpoints avatar dédiés
             Route::post('personnels/{personnel}/avatar',  [PersonnelController::class, 'uploadAvatar'])
                 ->name('v1.personnels.avatar.upload');
             Route::delete('personnels/{personnel}/avatar',[\App\Http\Controllers\Api\Admin\PersonnelController::class, 'deleteAvatar'])
                 ->name('v1.personnels.avatar.delete');
         });
 
-    // ── Medecins Lookup (pas besoin de model Medecin) ────────────────────────
-    // GET /api/v1/lookups/medecins?q=...&per_page=20
+    // ── Medecins Lookup ─────────────────────────────────────────────────────
     Route::middleware(['auth:sanctum','throttle:auth','ability:consultations.view'])
         ->get('lookups/medecins', [LookupController::class, 'medecins'])
         ->name('v1.lookups.medecins');
@@ -115,14 +129,13 @@ Route::prefix('v1')->group(function () {
         ->post('services/{service}/incoming', [IncomingController::class, 'store'])
         ->name('v1.services.incoming');
 
-    // Options pour un personnel donné (liste déroulante + sélection actuelle)
-    // GET /api/v1/services/options-for-personnel/{personnel}?active=1
+    // Options pour un personnel
     Route::middleware(['auth:sanctum','throttle:auth'])
         ->get('services/options-for-personnel/{personnel}', [ServiceController::class, 'optionsForPersonnel'])
         ->whereNumber('personnel')
         ->name('v1.services.options_for_personnel');
 
-    // ── Patients (/api/v1/patients) ───────────────────────────────────────
+    // ── Patients ────────────────────────────────────────────────────────────
     Route::middleware(['auth:sanctum','throttle:auth'])->group(function () {
         Route::get(   'patients',              [PatientController::class, 'index'])
             ->middleware('ability:patients.view')->name('v1.patients.index');
@@ -146,8 +159,7 @@ Route::prefix('v1')->group(function () {
             ->middleware('ability:patients.view')->name('v1.patients.history');
     });
 
-    // ── Visites (/api/v1/visites) ─────────────────────────────────────────
-    // NB: ajoute 'visites.read' / 'visites.write' dans ton seeder si tu gardes ces abilities
+    // ── Visites ─────────────────────────────────────────────────────────────
     Route::middleware(['auth:sanctum','throttle:auth'])->group(function () {
         Route::get(  'visites',      [VisiteController::class,'index'])
             ->middleware('ability:visites.read')->name('v1.visites.index');
@@ -164,25 +176,21 @@ Route::prefix('v1')->group(function () {
 
     // ── FACTURES simples + lignes + règlements ──────────────────────────
     Route::middleware(['auth:sanctum','throttle:auth'])->group(function () {
-        // Factures (index, show, store)
         Route::apiResource('factures', FactureController::class)->only(['index','show','store']);
 
-        // Lignes (nested)
         Route::apiResource('factures.lignes', FactureLigneController::class)
             ->only(['store','update','destroy'])
-            ->shallow(); // /lignes/{ligne} pour update/destroy
+            ->shallow();
 
-        // Règlements (nested)
         Route::apiResource('factures.reglements', ReglementController::class)
             ->only(['store'])
             ->shallow();
 
-        // PDF
         Route::get('factures/{facture}/pdf', [FactureController::class, 'pdf'])
             ->name('factures.pdf');
     });
 
-    // ── Finance – Invoices & Payments (/api/v1/finance/…) ─────────────────
+    // ── Finance – Invoices & Payments ────────────────────────────────────
     Route::middleware(['auth:sanctum','throttle:auth'])->group(function () {
         // Invoices
         Route::get(   'finance/invoices',           [InvoiceController::class,'index'])
@@ -208,7 +216,7 @@ Route::prefix('v1')->group(function () {
             ->middleware('ability:finance.payment.create');
     });
 
-    // ── Laboratoire (/api/v1/laboratoire) ─────────────────────────────────
+    // ── Laboratoire ───────────────────────────────────────────────────────
     Route::middleware(['auth:sanctum','throttle:auth'])->group(function () {
         Route::get(   'laboratoire',               [LaboratoireController::class, 'index'])
             ->middleware('ability:labo.view')->name('v1.laboratoire.index');
@@ -229,7 +237,7 @@ Route::prefix('v1')->group(function () {
             ->middleware('ability:labo.result.write')->name('v1.laboratoire.destroy');
     });
 
-    // ── Pansements (/api/v1/pansements) ───────────────────────────────────
+    // ── Pansements ────────────────────────────────────────────────────────
     Route::middleware(['auth:sanctum','throttle:auth'])->group(function () {
         Route::get(   'pansements',             [PansementController::class, 'index'])
             ->middleware('ability:pansement.view')->name('v1.pansements.index');
@@ -250,7 +258,7 @@ Route::prefix('v1')->group(function () {
             ->middleware('ability:pansement.delete')->name('v1.pansements.destroy');
     });
 
-    // ── Pédiatrie (/api/v1/pediatrie) + corbeille ─────────────────────────
+    // ── Pédiatrie + corbeille ─────────────────────────────────────────────
     Route::middleware(['auth:sanctum','throttle:auth'])->group(function () {
         Route::get(   'pediatrie',              [PediatrieController::class, 'index'])
             ->middleware('ability:pediatrie.view')->name('v1.pediatrie.index');
@@ -280,7 +288,7 @@ Route::prefix('v1')->group(function () {
             ->middleware('ability:pediatrie.delete')->name('v1.pediatrie.force');
     });
 
-    // ── Gynécologie (/api/v1/gynecologie) ──────────────────────────────────
+    // ── Gynécologie ────────────────────────────────────────────────────────
     Route::middleware(['auth:sanctum','throttle:auth'])->group(function () {
         Route::get(   'gynecologie',               [GynecologieController::class, 'index'])
             ->middleware('ability:gynecologie.view')->name('v1.gynecologie.index');
@@ -307,7 +315,7 @@ Route::prefix('v1')->group(function () {
             ->middleware('ability:gynecologie.delete')->name('v1.gynecologie.force');
     });
 
-    // ── SMI (/api/v1/smi) ──────────────────────────────────────────────────
+    // ── SMI ────────────────────────────────────────────────────────────────
     Route::middleware(['auth:sanctum','throttle:auth'])->group(function () {
         Route::get(   'smi',           [SmiController::class, 'index'])
             ->middleware('ability:smi.view')->name('v1.smi.index');
@@ -337,7 +345,7 @@ Route::prefix('v1')->group(function () {
             ->middleware('ability:smi.delete')->name('v1.smi.force');
     });
 
-    // ── Maternité (/api/v1/maternite) ──────────────────────────────────────
+    // ── Maternité ──────────────────────────────────────────────────────────
     Route::middleware(['auth:sanctum','throttle:auth'])->group(function () {
         Route::get(   'maternite',               [MaterniteController::class, 'index'])
             ->middleware('ability:maternite.view')->name('v1.maternite.index');
@@ -367,7 +375,7 @@ Route::prefix('v1')->group(function () {
             ->middleware('ability:maternite.delete')->name('v1.maternite.force');
     });
 
-    // ── Gestion malade (/api/v1/gestion-malade) ────────────────────────────
+    // ── Gestion malade ─────────────────────────────────────────────────────
     Route::middleware(['auth:sanctum','throttle:auth'])->group(function () {
         Route::get(   'gestion-malade',                  [GestionMaladeController::class, 'index'])
             ->middleware('ability:gestion-malade.view')->name('v1.gestion_malade.index');
@@ -397,7 +405,7 @@ Route::prefix('v1')->group(function () {
             ->middleware('ability:gestion-malade.delete')->name('v1.gestion_malade.force');
     });
 
-    // ── Sanitaire (/api/v1/sanitaire) ──────────────────────────────────────
+    // ── Sanitaire ──────────────────────────────────────────────────────────
     Route::middleware(['auth:sanctum','throttle:auth'])->group(function () {
         Route::get(   'sanitaire',               [SanitaireController::class, 'index'])
             ->middleware('ability:sanitaire.view')->name('v1.sanitaire.index');
@@ -427,7 +435,7 @@ Route::prefix('v1')->group(function () {
             ->middleware('ability:sanitaire.delete')->name('v1.sanitaire.force');
     });
 
-    // ── Kinésithérapie (/api/v1/kinesitherapie) ────────────────────────────
+    // ── Kinésithérapie ─────────────────────────────────────────────────────
     Route::middleware(['auth:sanctum','throttle:auth'])->group(function () {
         Route::get(   'kinesitherapie',                  [KinesitherapieController::class, 'index'])
             ->middleware('ability:kinesitherapie.view')->name('v1.kine.index');
@@ -457,7 +465,7 @@ Route::prefix('v1')->group(function () {
             ->middleware('ability:kinesitherapie.delete')->name('v1.kine.force');
     });
 
-    // ── ARU (/api/v1/aru) ──────────────────────────────────────────────────
+    // ── ARU ────────────────────────────────────────────────────────────────
     Route::middleware(['auth:sanctum','throttle:auth'])->group(function () {
         Route::get(   'aru',           [AruController::class, 'index'])
             ->middleware('ability:aru.view')->name('v1.aru.index');
@@ -487,7 +495,7 @@ Route::prefix('v1')->group(function () {
             ->middleware('ability:aru.delete')->name('v1.aru.force');
     });
 
-    // ── Bloc opératoire (/api/v1/bloc-operatoire) ──────────────────────────
+    // ── Bloc opératoire ───────────────────────────────────────────────────
     Route::middleware(['auth:sanctum','throttle:auth'])->group(function () {
         Route::get(   'bloc-operatoire',                    [BlocOperatoireController::class, 'index'])
             ->middleware('ability:bloc-operatoire.view')->name('v1.bloc.index');
@@ -517,7 +525,7 @@ Route::prefix('v1')->group(function () {
             ->middleware('ability:bloc-operatoire.delete')->name('v1.bloc.force');
     });
 
-    // ── Consultations (/api/v1/consultations) ──────────────────────────────
+    // ── Consultations ──────────────────────────────────────────────────────
     Route::middleware(['auth:sanctum','throttle:auth'])->group(function () {
         Route::get(   'consultations',                 [ConsultationController::class, 'index'])
             ->middleware('ability:consultations.view')->name('v1.consultations.index');
@@ -547,7 +555,7 @@ Route::prefix('v1')->group(function () {
             ->middleware('ability:consultations.delete')->name('v1.consultations.force');
     });
 
-    // ── Médecine (/api/v1/medecines) ────────────────────────────────────────
+    // ── Médecine ───────────────────────────────────────────────────────────
     Route::middleware(['auth:sanctum','throttle:auth'])->group(function () {
         Route::get(   'medecines',               [MedecineController::class, 'index'])
             ->middleware('ability:medecine.view')->name('v1.medecines.index');
@@ -568,8 +576,7 @@ Route::prefix('v1')->group(function () {
             ->middleware('ability:medecine.delete')->name('v1.medecines.destroy');
     });
 
-
-    // ── Examens (/api/v1/examens) ───────────────────────────────────────────
+    // ── Examens ────────────────────────────────────────────────────────────
     Route::middleware(['auth:sanctum','throttle:auth'])->group(function () {
         Route::get(   'examens',            [ExamenController::class, 'index'])
             ->middleware('ability:examen.view')->name('v1.examen.index');
@@ -587,169 +594,135 @@ Route::prefix('v1')->group(function () {
             ->middleware('ability:examen.update');
 
         Route::delete('examens/{examen}',   [ExamenController::class, 'destroy'])
-            ->middleware('ability:examen.delete')->name('v1.examen.
-            .destroy');
+            ->middleware('ability:examen.delete')->name('v1.examen.destroy');
 
-        // Créer un examen "depuis un service" (assoc auto au service)
+        // Créer un examen "depuis un service"
         Route::post('services/{service}/examens', [ExamenController::class, 'storeForService'])
             ->middleware('ability:examens.create')->name('v1.services.examens.store');
     });
 
+    // ── Inventaire Labo – Réactifs & Lots (/api/v1/inventory/…) ───────────
+    Route::prefix('inventory')
+        ->middleware(['auth:sanctum', 'throttle:auth'])
+        ->group(function () {
 
-    // ── Inventaire Labo – Réactifs & Lots (/api/v1/inventory/…) ───────────────
-    Route::prefix('inventory')->middleware(['auth:sanctum','throttle:auth'])->group(function () {
+            // REAGENTS
+            Route::post('reagents', [ReagentController::class, 'store'])
+                ->middleware('ability:inventory.write')
+                ->name('v1.inventory.reagents.store');
 
-        // 7.1 Créer un réactif
-        // Exemples utilisateur: POST /api/reagents
-        // Réel (avec v1 + prefix): POST /api/v1/inventory/reagents
-        Route::post('reagents', [ReagentController::class, 'store'])
-            ->middleware('ability:inventory.write')
-            ->name('v1.inventory.reagents.store');
+            Route::get('reagents', [ReagentController::class, 'index'])
+                ->middleware('ability:inventory.view')
+                ->name('v1.inventory.reagents.index');
 
-        // (Optionnel conseillé) voir la liste et un réactif
-        Route::get('reagents', [ReagentController::class, 'index'])
-            ->middleware('ability:inventory.view')
-            ->name('v1.inventory.reagents.index');
-        Route::get('reagents/{reagent}', [ReagentController::class, 'show'])
-            ->middleware('ability:inventory.view')
-            ->whereNumber('reagent')
-            ->name('v1.inventory.reagents.show');
+            Route::get('reagents/{reagent}', [ReagentController::class, 'show'])
+                ->middleware('ability:inventory.view')
+                ->whereNumber('reagent')
+                ->name('v1.inventory.reagents.show');
 
-        // 7.2 Réception d’un lot (IN)
-        // Exemples utilisateur: POST /api/reagents/{id}/lots
-        // Réel: POST /api/v1/inventory/reagents/{reagent}/lots
-        Route::post('reagents/{reagent}/lots', [LotController::class, 'store'])
-            ->middleware('ability:inventory.write')
-            ->whereNumber('reagent')
-            ->name('v1.inventory.reagents.lots.store');
+            Route::match(['put', 'patch'], 'reagents/{reagent}', [ReagentController::class, 'update'])
+                ->middleware('ability:inventory.write')
+                ->whereNumber('reagent')
+                ->name('v1.inventory.reagents.update');
 
-        // (Optionnel conseillé) lister les lots d’un réactif
-        Route::get('reagents/{reagent}/lots', [LotController::class, 'index'])
-            ->middleware('ability:inventory.view')
-            ->whereNumber('reagent')
-            ->name('v1.inventory.reagents.lots.index');
+            Route::delete('reagents/{reagent}', [ReagentController::class, 'destroy'])
+                ->middleware('ability:inventory.admin')
+                ->whereNumber('reagent')
+                ->name('v1.inventory.reagents.destroy');
 
-        // 7.3 Sortie FEFO (consommation)
-        // Exemples utilisateur: POST /api/reagents/{id}/consume-fefo
-        // Réel: POST /api/v1/inventory/reagents/{reagent}/consume-fefo
-        Route::post('reagents/{reagent}/consume-fefo', [StockMovementController::class, 'consumeFefo'])
-            ->middleware('ability:inventory.write')
-            ->whereNumber('reagent')
-            ->name('v1.inventory.reagents.consume_fefo');
+            // LOTS
+            Route::post('reagents/{reagent}/lots', [LotController::class, 'store'])
+                ->middleware('ability:inventory.write')
+                ->whereNumber('reagent')
+                ->name('v1.inventory.reagents.lots.store');
 
-        // 7.4 Transfert d’un lot
-        // Exemples utilisateur: POST /api/reagents/{id}/transfer
-        // Réel: POST /api/v1/inventory/reagents/{reagent}/transfer
-        
-        Route::post('reagents/{reagent}/transfer', [StockMovementController::class, 'transfer'])
-            ->middleware('ability:inventory.write')
-            ->whereNumber('reagent')
-            ->name('v1.inventory.reagents.transfer');
+            Route::get('reagents/{reagent}/lots', [LotController::class, 'index'])
+                ->middleware('ability:inventory.view')
+                ->whereNumber('reagent')
+                ->name('v1.inventory.reagents.lots.index');
 
-        // (Optionnel utile) stock courant + mouvements
-        Route::get('reagents/{reagent}/stock', [ReagentController::class, 'stock'])
-            ->middleware('ability:inventory.view')
-            ->whereNumber('reagent')
-            ->name('v1.inventory.reagents.stock');
+            // Mouvements
+            Route::post('reagents/{reagent}/consume-fefo', [StockMovementController::class, 'consumeFefo'])
+                ->middleware('ability:inventory.write')
+                ->whereNumber('reagent')
+                ->name('v1.inventory.reagents.consume_fefo');
 
-        Route::get('reagents/{reagent}/movements', [StockMovementController::class, 'index'])
-            ->middleware('ability:inventory.view')
-            ->whereNumber('reagent')
-            ->name('v1.inventory.reagents.movements');
+            Route::post('reagents/{reagent}/transfer', [StockMovementController::class, 'transfer'])
+                ->middleware('ability:inventory.write')
+                ->whereNumber('reagent')
+                ->name('v1.inventory.reagents.transfer');
 
-        // (Optionnel admin) statut lot (quarantaine / élimination)
-        Route::post('reagent-lots/{lot}/quarantine', [LotController::class, 'quarantine'])
-            ->middleware('ability:inventory.admin')
-            ->whereNumber('lot')
-            ->name('v1.inventory.lots.quarantine');
+            Route::get('reagents/{reagent}/stock', [ReagentController::class, 'stock'])
+                ->middleware('ability:inventory.view')
+                ->whereNumber('reagent')
+                ->name('v1.inventory.reagents.stock');
 
-        Route::post('reagent-lots/{lot}/dispose', [LotController::class, 'dispose'])
-            ->middleware('ability:inventory.admin')
-            ->whereNumber('lot')
-            ->name('v1.inventory.lots.dispose');
-    });
+            Route::get('reagents/{reagent}/movements', [StockMovementController::class, 'index'])
+                ->middleware('ability:inventory.view')
+                ->whereNumber('reagent')
+                ->name('v1.inventory.reagents.movements');
 
-    
+            // Actions sur lot
+            Route::post('reagent-lots/{lot}/quarantine', [LotController::class, 'quarantine'])
+                ->middleware('ability:inventory.admin')
+                ->whereNumber('lot')
+                ->name('v1.inventory.lots.quarantine');
 
-    // ── Locations (emplacements physiques) ─────────────────────────────────────
+            Route::post('reagent-lots/{lot}/dispose', [LotController::class, 'dispose'])
+                ->middleware('ability:inventory.admin')
+                ->whereNumber('lot')
+                ->name('v1.inventory.lots.dispose');
+
+            // LOCATIONS
+            Route::get('locations', [LocationController::class, 'index'])
+                ->middleware('ability:inventory.view')
+                ->name('v1.inventory.locations.index');
+
+            Route::post('locations', [LocationController::class, 'store'])
+                ->middleware('ability:inventory.write')
+                ->name('v1.inventory.locations.store');
+
+            Route::get('locations/{location}', [LocationController::class, 'show'])
+                ->middleware('ability:inventory.view')
+                ->whereNumber('location')
+                ->name('v1.inventory.locations.show');
+
+            Route::match(['put','patch'], 'locations/{location}', [LocationController::class, 'update'])
+                ->middleware('ability:inventory.write')
+                ->whereNumber('location')
+                ->name('v1.inventory.locations.update');
+
+            Route::delete('locations/{location}', [LocationController::class, 'destroy'])
+                ->middleware('ability:inventory.admin')
+                ->whereNumber('location')
+                ->name('v1.inventory.locations.destroy');
+
+            // REPORTS
+            Route::get('reports/reorders', [ReportController::class, 'reorders'])
+                ->middleware('ability:inventory.view')
+                ->name('v1.inventory.reports.reorders');
+
+            Route::get('reports/expiries', [ReportController::class, 'expiries'])
+                ->middleware('ability:inventory.view')
+                ->name('v1.inventory.reports.expiries');
+        });
+
+    // ── Caisse centrale : Facture Items ────────────────────────────────────
     Route::middleware(['auth:sanctum','throttle:auth'])->group(function () {
-        // Lister / filtrer
-        Route::get('inventory/locations', [LocationController::class, 'index'])
-            ->middleware('ability:inventory.view')
-            ->name('v1.inventory.locations.index');
-
-        // Créer
-        Route::post('inventory/locations', [LocationController::class, 'store'])
-            ->middleware('ability:inventory.write')
-            ->name('v1.inventory.locations.store');
-
-        // Détails
-        Route::get('inventory/locations/{location}', [LocationController::class, 'show'])
-            ->middleware('ability:inventory.view')
-            ->whereNumber('location')
-            ->name('v1.inventory.locations.show');
-
-        // Mettre à jour
-        Route::match(['put','patch'], 'inventory/locations/{location}', [LocationController::class, 'update'])
-            ->middleware('ability:inventory.write')
-            ->whereNumber('location')
-            ->name('v1.inventory.locations.update');
-
-        // Supprimer
-        Route::delete('inventory/locations/{location}', [LocationController::class, 'destroy'])
-            ->middleware('ability:inventory.admin')
-            ->whereNumber('location')
-            ->name('v1.inventory.locations.destroy');
-    });
-
-
-    // ── Reports inventaire (réassort & péremptions) ───────────────────────────
-    Route::prefix('inventory')->middleware(['auth:sanctum','throttle:auth'])->group(function () {
-
-        // Réactifs sous le point de commande (reorder)
-        // GET /api/v1/inventory/reports/reorders
-        Route::get('reports/reorders', [ReportController::class, 'reorders'])
-            ->middleware('ability:inventory.view')
-            ->name('v1.inventory.reports.reorders');
-
-        // Lots qui expirent sous N jours (par défaut 30)
-        // GET /api/v1/inventory/reports/expiries?days=30
-        Route::get('reports/expiries', [ReportController::class, 'expiries'])
-            ->middleware('ability:inventory.view')
-            ->name('v1.inventory.reports.expiries');
-    });
-
-    
-
-    // ── Caisse centrale : Facture Items (/api/v1/facture-items) ───────────────
-    Route::middleware(['auth:sanctum','throttle:auth'])->group(function () {
-        // Créer un item (crée une nouvelle facture si facture_id omis)
         Route::post('facture-items', [FactureItemController::class, 'store'])
             ->middleware('ability:cashier.item.create')
             ->name('v1.facture_items.store');
 
-        // Mettre à jour un item
         Route::patch('facture-items/{facture_item}', [FactureItemController::class, 'update'])
             ->middleware('ability:cashier.item.update')
             ->name('v1.facture_items.update');
 
-        // Supprimer un item
         Route::delete('facture-items/{facture_item}', [FactureItemController::class, 'destroy'])
             ->middleware('ability:cashier.item.delete')
             ->name('v1.facture_items.destroy');
-
-        // (Optionnel) Lister / Voir un item
-        // Route::get('facture-items', [FactureItemController::class, 'index'])
-        //     ->middleware('ability:cashier.item.view')
-        //     ->name('v1.facture_items.index');
-
-        // Route::get('facture-items/{facture_item}', [FactureItemController::class, 'show'])
-        //     ->middleware('ability:cashier.item.view')
-        //     ->name('v1.facture_items.show');
     });
 
-
-    // ── Tarifs (/api/v1/tarifs) ───────────────────────────────────────────
+    // ── Tarifs ─────────────────────────────────────────────────────────────
     Route::middleware(['auth:sanctum','throttle:auth'])->group(function () {
 
         Route::get('tarifs', [TarifController::class, 'index'])
@@ -781,11 +754,8 @@ Route::prefix('v1')->group(function () {
             ->name('v1.tarifs.toggle');
     });
 
-
-
-    // ── Médecins (/api/v1/medecins) ───────────────────────────────────────────
+    // ── Médecins ───────────────────────────────────────────────────────────
     Route::middleware(['auth:sanctum','throttle:auth'])->group(function () {
-        // Liste + création + lecture + maj + suppression
         Route::get(   'medecins',             [MedecinController::class, 'index'])
             ->middleware('ability:medecins.view')->name('v1.medecins.index');
 
@@ -804,28 +774,23 @@ Route::prefix('v1')->group(function () {
         Route::delete('medecins/{medecin}',   [MedecinController::class, 'destroy'])
             ->middleware('ability:medecins.delete')->name('v1.medecins.destroy');
 
-        // Corbeille (si SoftDeletes activé sur Medecin)
-        Route::get(   'medecins-corbeille',   [MedecinController::class, 'trash'])
+        Route::get('medecins-corbeille',   [MedecinController::class, 'trash'])
             ->middleware('ability:medecins.view')->name('v1.medecins.trash');
 
-        Route::post(  'medecins/{id}/restore',[MedecinController::class, 'restore'])
+        Route::post('medecins/{id}/restore',[MedecinController::class, 'restore'])
             ->middleware('ability:medecins.update')->whereNumber('id')->name('v1.medecins.restore');
 
         Route::delete('medecins/{id}/force',  [MedecinController::class, 'forceDestroy'])
             ->middleware('ability:medecins.delete')->whereNumber('id')->name('v1.medecins.force');
 
-        // Utilitaires pratiques
-        // Récupérer le médecin à partir d'un personnel
         Route::get('medecins/by-personnel/{personnel}', [MedecinController::class, 'byPersonnel'])
             ->middleware('ability:medecins.view')->whereNumber('personnel')->name('v1.medecins.by_personnel');
 
-        // Le médecin du user connecté (si existant)
         Route::get('me/medecin', [MedecinController::class, 'me'])
             ->middleware('ability:medecins.view')->name('v1.me.medecin');
     });
 
-
-    // ── Echographies (/api/v1/echographies) ───────────────────────────────────
+    // ── Echographies ───────────────────────────────────────────────────────
     Route::middleware(['auth:sanctum','throttle:auth'])->group(function () {
         Route::get(   'echographies',               [EchographieController::class, 'index'])
             ->middleware('ability:echographies.view')->name('v1.echographies.index');
@@ -845,19 +810,14 @@ Route::prefix('v1')->group(function () {
         Route::delete('echographies/{echographie}', [EchographieController::class, 'destroy'])
             ->middleware('ability:echographies.delete')->name('v1.echographies.destroy');
 
-        // restaurer (soft delete)
         Route::post('echographies/{id}/restore', [EchographieController::class, 'restore'])
             ->middleware('ability:echographies.update')->name('v1.echographies.restore');
 
-        // Créer une écho "depuis un service"
         Route::post('services/{service}/echographies', [EchographieController::class, 'storeForService'])
             ->middleware('ability:echographies.create')->name('v1.services.echographies.store');
     });
 
-
-
-
-    // ── Billets de sortie (/api/v1/billets-sortie) ─────────────────────────────
+    // ── Billets de sortie ─────────────────────────────────────────────────
     Route::middleware(['auth:sanctum','throttle:auth'])->group(function () {
         Route::get(   'billets-sortie',                 [BilletSortieController::class, 'index'])
             ->middleware('ability:billets_sortie.view')->name('v1.billets_sortie.index');
@@ -877,18 +837,14 @@ Route::prefix('v1')->group(function () {
         Route::delete('billets-sortie/{billet}',        [BilletSortieController::class, 'destroy'])
             ->middleware('ability:billets_sortie.delete')->name('v1.billets_sortie.destroy');
 
-        // restauration
         Route::post(  'billets-sortie/{id}/restore',    [BilletSortieController::class, 'restore'])
             ->middleware('ability:billets_sortie.update')->name('v1.billets_sortie.restore');
 
-        // création depuis un service
         Route::post('services/{service}/billets-sortie',[BilletSortieController::class, 'storeForService'])
             ->middleware('ability:billets_sortie.create')->name('v1.services.billets_sortie.store');
     });
 
-
-
-    // ── Déclarations de naissance (/api/v1/declarations-naissance) ────────────
+    // ── Déclarations de naissance ─────────────────────────────────────────
     Route::middleware(['auth:sanctum','throttle:auth'])->group(function () {
         Route::get(   'declarations-naissance',                   [DeclarationNaissanceController::class, 'index'])
             ->middleware('ability:declarations_naissance.view')->name('v1.declarations_naissance.index');
@@ -908,18 +864,14 @@ Route::prefix('v1')->group(function () {
         Route::delete('declarations-naissance/{declaration}',     [DeclarationNaissanceController::class, 'destroy'])
             ->middleware('ability:declarations_naissance.delete')->name('v1.declarations_naissance.destroy');
 
-        // restauration
         Route::post(  'declarations-naissance/{id}/restore',      [DeclarationNaissanceController::class, 'restore'])
             ->middleware('ability:declarations_naissance.update')->name('v1.declarations_naissance.restore');
 
-        // création depuis un service
         Route::post('services/{service}/declarations-naissance',  [DeclarationNaissanceController::class, 'storeForService'])
             ->middleware('ability:declarations_naissance.create')->name('v1.services.declarations_naissance.store');
     });
 
-
-
-    // ── Hospitalisations (/api/v1/hospitalisations) ───────────────────────────
+    // ── Hospitalisations ──────────────────────────────────────────────────
     Route::middleware(['auth:sanctum','throttle:auth'])->group(function () {
         Route::get(   'hospitalisations',                    [HospitalisationController::class, 'index'])
             ->middleware('ability:hospitalisations.view')->name('v1.hospitalisations.index');
@@ -939,108 +891,236 @@ Route::prefix('v1')->group(function () {
         Route::delete('hospitalisations/{hospitalisation}',  [HospitalisationController::class, 'destroy'])
             ->middleware('ability:hospitalisations.delete')->name('v1.hospitalisations.destroy');
 
-        // restauration
         Route::post(  'hospitalisations/{id}/restore',       [HospitalisationController::class, 'restore'])
             ->middleware('ability:hospitalisations.update')->name('v1.hospitalisations.restore');
 
-        // création depuis un service
         Route::post('services/{service}/hospitalisations',   [HospitalisationController::class, 'storeForService'])
             ->middleware('ability:hospitalisations.create')->name('v1.services.hospitalisations.store');
     });
 
+    // ── PHARMA ────────────────────────────────────────────────────────────
     Route::middleware(['auth:sanctum','throttle:auth'])
-    ->prefix('pharma')
-    ->group(function () {
+        ->prefix('pharma')
+        ->group(function () {
 
-        /*
-        |--------------------------------------------------------------------------
-        | DCI
-        |--------------------------------------------------------------------------
-        */
-        Route::get('dcis/options', [DciController::class,'options'])
-            ->middleware('ability:pharma.dci.view');
+            // DCI
+            Route::get('dcis/options', [DciController::class,'options'])
+                ->middleware('ability:pharma.dci.view');
 
-        Route::apiResource('dcis', DciController::class)->middleware([
-            'index'   => 'ability:pharma.dci.view',
-            'show'    => 'ability:pharma.dci.view',
-            'store'   => 'ability:pharma.dci.manage',
-            'update'  => 'ability:pharma.dci.manage',
-            'destroy' => 'ability:pharma.dci.manage',
-        ]);
+            Route::apiResource('dcis', DciController::class)
+                ->only(['index','show'])
+                ->middleware('ability:pharma.dci.view');
 
-        /*
-        |--------------------------------------------------------------------------
-        | Articles
-        |--------------------------------------------------------------------------
-        */
-        Route::get('articles/options', [ArticleController::class,'options'])
-            ->middleware('ability:pharma.article.view');
+            Route::apiResource('dcis', DciController::class)
+                ->only(['store','update','destroy'])
+                ->middleware('ability:pharma.dci.manage');
 
-        Route::apiResource('articles', ArticleController::class)
-            ->parameters(['articles' => 'article'])
-            ->middleware([
-                'index'   => 'ability:pharma.article.view',
-                'show'    => 'ability:pharma.article.view',
-                'store'   => 'ability:pharma.article.manage',
-                'update'  => 'ability:pharma.article.manage',
-                'destroy' => 'ability:pharma.article.manage',
-            ]);
+            // Articles
+            Route::get('articles/options', [ArticleController::class,'options'])
+                ->middleware('ability:pharma.article.view');
 
-        /*
-        |--------------------------------------------------------------------------
-        | Stock
-        |--------------------------------------------------------------------------
-        */
-        Route::post('stock/in',     [StockController::class,'in'])
-            ->middleware('ability:pharma.stock.in');
-        Route::post('stock/out',    [StockController::class,'out'])
-            ->middleware('ability:pharma.stock.out');
-        Route::post('stock/adjust', [StockController::class,'adjust'])
-            ->middleware('ability:pharma.stock.adjust');
+            Route::apiResource('articles', ArticleController::class)
+                ->parameters(['articles' => 'article'])
+                ->only(['index','show'])
+                ->middleware('ability:pharma.article.view');
 
-        Route::get('stock/movements',   [StockController::class,'movements'])
-            ->middleware('ability:pharma.stock.view');
-        Route::get('stock/summary',     [StockController::class,'summary'])
-            ->middleware('ability:pharma.stock.view');
-        Route::get('stock/top-sellers', [StockController::class,'topSellers'])
-            ->middleware('ability:pharma.stock.view');
-        Route::get('stock/oldest-lots', [StockController::class,'oldestLots'])
-            ->middleware('ability:pharma.stock.view');
-        Route::get('stock/alerts',      [StockController::class,'alerts'])
-            ->middleware('ability:pharma.stock.view');
-        Route::post('stock/thresholds', [StockController::class,'setThresholds'])
-            ->middleware('ability:pharma.article.manage');
+            Route::apiResource('articles', ArticleController::class)
+                ->parameters(['articles' => 'article'])
+                ->only(['store','update','destroy'])
+                ->middleware('ability:pharma.article.manage');
 
-        // ✅ Nouvelle route FEFO pour voir les lots d’un article
-        Route::get('lots', [StockController::class, 'lots'])
-            ->middleware('ability:pharma.stock.view');
+            Route::get('dcis/{dci}/articles', [ArticleController::class, 'byDci'])
+                ->middleware('ability:pharma.article.view');
 
-        /*
-        |--------------------------------------------------------------------------
-        | Carts
-        |--------------------------------------------------------------------------
-        */
-        Route::post('carts', [CartController::class,'store'])
-            ->middleware('ability:pharma.cart.manage');
-        Route::get('carts/{cart}', [CartController::class,'show'])
-            ->middleware('ability:pharma.cart.manage');
+            Route::get('substitutes', [ArticleController::class, 'substitutes'])
+                ->middleware('ability:pharma.article.view');
 
-        Route::post('carts/{cart}/lines', [CartController::class,'addLine'])
-            ->middleware('ability:pharma.cart.manage');
-        Route::patch('carts/{cart}/lines/{line}', [CartController::class,'updateLine'])
-            ->middleware('ability:pharma.cart.manage');
-        Route::delete('carts/{cart}/lines/{line}', [CartController::class,'removeLine'])
-            ->middleware('ability:pharma.cart.manage');
+            Route::post('articles/{article}/image', [ArticleController::class, 'updateImage'])
+                ->middleware('ability:pharma.article.manage');
 
-        Route::post('carts/{cart}/checkout', [CartController::class,'checkout'])
-            ->middleware('ability:pharma.cart.checkout');
+            Route::get('articles/{article}/equivalents', [\App\Http\Controllers\Api\Pharma\ArticleController::class, 'equivalents'])
+                ->middleware('ability:pharma.article.view');
+
+            // Stock
+            Route::post('stock/in',     [StockController::class,'in'])
+                ->middleware('ability:pharma.stock.in');
+            Route::post('stock/out',    [StockController::class,'out'])
+                ->middleware('ability:pharma.stock.out');
+            Route::post('stock/adjust', [StockController::class,'adjust'])
+                ->middleware('ability:pharma.stock.adjust');
+
+            Route::get('stock/movements',   [StockController::class,'movements'])
+                ->middleware('ability:pharma.stock.view');
+            Route::get('stock/summary',     [StockController::class,'summary'])
+                ->middleware('ability:pharma.stock.view');
+            Route::get('stock/top-sellers', [StockController::class,'topSellers'])
+                ->middleware('ability:pharma.stock.view');
+            Route::get('stock/oldest-lots', [StockController::class,'oldestLots'])
+                ->middleware('ability:pharma.stock.view');
+            Route::get('stock/alerts',      [StockController::class,'alerts'])
+                ->middleware('ability:pharma.stock.view');
+            Route::post('stock/thresholds', [StockController::class,'setThresholds'])
+                ->middleware('ability:pharma.article.manage');
+
+            Route::get('lots', [StockController::class, 'lots'])
+                ->middleware('ability:pharma.stock.view');
+
+            // Panier
+            Route::post('carts', [CartController::class,'store'])
+                ->middleware('ability:pharma.cart.manage');
+            Route::get('carts/{cart}', [CartController::class,'show'])
+                ->middleware('ability:pharma.cart.manage');
+            Route::post('carts/{cart}/lines', [CartController::class,'addLine'])
+                ->middleware('ability:pharma.cart.manage');
+            Route::patch('carts/{cart}/lines/{line}', [CartController::class,'updateLine'])
+                ->middleware('ability:pharma.cart.manage');
+            Route::delete('carts/{cart}/lines/{line}', [CartController::class,'removeLine'])
+                ->middleware('ability:pharma.cart.manage');
+            Route::post('carts/{cart}/checkout', [CartController::class,'checkout'])
+                ->middleware('ability:pharma.cart.checkout');
+        });
+
+    // ────────────────────────────────────────────────
+    // 🌍 Routes API - Caisse  (abilities)
+    // ────────────────────────────────────────────────
+    Route::middleware(['auth:sanctum','abilities:caisse.access'])
+        ->prefix('caisse')
+        ->group(function () {
+
+            // Sessions de caisse
+            Route::post('/sessions/open',  [CashSessionController::class, 'open'])
+                ->middleware('abilities:caisse.session.manage')
+                ->name('caisse.sessions.open');
+
+            Route::post('/sessions/close', [CashSessionController::class, 'close'])
+                ->middleware('abilities:caisse.session.manage')
+                ->name('caisse.sessions.close');
+
+            Route::get('/sessions/me',     [CashSessionController::class, 'current'])
+                ->middleware('abilities:caisse.session.view')
+                ->name('caisse.sessions.current');
+
+            Route::get('/sessions/current', [CashSessionController::class, 'current'])
+                ->middleware('abilities:caisse.session.view')
+                ->name('caisse.sessions.current.alias');
+
+            // Paiements & rapports
+            Route::get('/payments', [CashReportController::class, 'payments'])
+                ->middleware('abilities:caisse.report.view')
+                ->name('caisse.payments.index');
+
+            Route::get('/rapport', [CashReportController::class, 'summary'])
+                ->middleware('abilities:caisse.report.view')
+                ->name('caisse.rapport.summary');
+
+            Route::get('/top/services', [\App\Http\Controllers\Api\Caisse\CashTopController::class, 'topServices'])
+                ->middleware('abilities:caisse.report.view')
+                ->name('caisse.top.services');
+
+            Route::get('/top/cashiers', [\App\Http\Controllers\Api\Caisse\CashTopController::class, 'topCashiers'])
+                ->middleware('abilities:caisse.report.view')
+                ->name('caisse.top.cashiers');
+
+            Route::get('/top/overview', [\App\Http\Controllers\Api\Caisse\CashTopController::class, 'overview'])
+                ->middleware('abilities:caisse.report.view')
+                ->name('caisse.top.overview');
+
+            Route::get('/z-report', [\App\Http\Controllers\Api\Caisse\CashZReportController::class, 'json'])
+                ->middleware('abilities:caisse.report.view')
+                ->name('caisse.zreport.json');
+
+            Route::get('/z-report/pdf', [\App\Http\Controllers\Api\Caisse\CashZReportController::class, 'pdf'])
+                ->middleware('abilities:caisse.report.view')
+                ->name('caisse.zreport.pdf');
+
+            Route::get('/audit', [CashAuditController::class, 'index'])
+                ->middleware('abilities:caisse.admin.view')
+                ->name('caisse.audit.index');
+
+            // KPIs session ouverte
+            Route::get('/sessions/summary', [\App\Http\Controllers\Api\Caisse\CashSessionController::class, 'summary'])
+                ->middleware('abilities:caisse.session.view')
+                ->name('caisse.sessions.summary');
+
+            // Admin: force close
+            Route::post('/sessions/{session}/force-close', [\App\Http\Controllers\Api\Caisse\CashSessionAdminController::class, 'forceClose'])
+                ->middleware('abilities:caisse.session.manage')
+                ->name('caisse.sessions.force_close');
+
+            // Export CSV + ticket
+            Route::get('/payments/export', [CashReportController::class, 'exportCsv'])
+                ->middleware('abilities:caisse.report.view')
+                ->name('caisse.payments.export');
+
+            Route::get('/payments/{reglement}/ticket', [\App\Http\Controllers\Api\Caisse\PaymentTicketController::class, 'show'])
+                ->middleware('abilities:caisse.report.view')
+                ->name('caisse.payments.ticket');
+
+            // Variante "register"
+            Route::post('sessions/open/register',   [CashRegisterSessionController::class, 'open'])
+                ->middleware('abilities:caisse.session.manage')
+                ->name('caisse.register.open');
+
+            Route::get('sessions/current/register', [CashRegisterSessionController::class, 'current'])
+                ->middleware('abilities:caisse.session.view')
+                ->name('caisse.register.current');
+
+            Route::post('sessions/close/register',  [CashRegisterSessionController::class, 'close'])
+                ->middleware('abilities:caisse.session.manage')
+                ->name('caisse.register.close');
+        });
+
+    // ── FACTURES simples + lignes + règlements (avec contraintes caisse) ──
+    Route::middleware(['auth:sanctum','throttle:auth'])->group(function () {
+        Route::apiResource('factures', FactureController::class)->only(['index','show','store']);
+
+        Route::apiResource('factures.lignes', FactureLigneController::class)
+            ->only(['store','update','destroy'])
+            ->shallow();
+
+        // Exiger session ouverte + portée service pour encaissement
+        Route::apiResource('factures.reglements', ReglementController::class)
+            ->only(['store'])
+            ->middleware(['abilities:caisse.reglement.create', 'cashbox.open', 'cashbox.service'])
+            ->shallow();
+
+        Route::get('factures/{facture}/pdf', [FactureController::class, 'pdf'])
+            ->name('factures.pdf');
     });
 
+    // ── RDV & Planning Médecins ───────────────────────────────────────────────
+   Route::middleware(['auth:sanctum','throttle:auth'])->group(function () {
 
+    Route::get(   'medecins/{medecin}/planning',    [PlanningController::class,'index'])
+        ->name('v1.medecins.planning.index');
+
+    Route::post(  'medecins/{medecin}/planning',    [PlanningController::class,'store'])
+        // ->middleware('ability:medecins.update')
+        ->name('v1.medecins.planning.store');
+
+    Route::post(  'medecins/{medecin}/exceptions',  [PlanningController::class,'addException'])
+        // ->middleware('ability:medecins.update')
+        ->name('v1.medecins.planning.exceptions.store');
+
+    Route::get(   'medecins/{medecin}/disponibilites', [PlanningController::class,'disponibilites'])
+        ->name('v1.medecins.disponibilites');
+
+    Route::get(   'medecins/{medecin}/rendez-vous', [RendezVousController::class,'listByMedecin'])
+        ->name('v1.medecins.rendez_vous.index');
+
+    // 🔹 Nouveau : liste globale des rendez-vous (avec filtres éventuels dans index())
+    Route::get(   'rendez-vous',               [RendezVousController::class,'index'])
+        // ->middleware('ability:rendez_vous.view')
+        ->name('v1.rendez_vous.index');
+
+    Route::post(  'rendez-vous',               [RendezVousController::class,'store'])
+        // ->middleware('ability:rendez_vous.create')
+        ->name('v1.rendez_vous.store');
+
+    Route::patch( 'rendez-vous/{rdv}',         [RendezVousController::class,'update'])
+        // ->middleware('ability:rendez_vous.update')
+        ->name('v1.rendez_vous.update');
 });
 
 
-
-
-
-
+});

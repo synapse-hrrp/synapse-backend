@@ -10,16 +10,30 @@ class RolesAndPermissionsSeeder extends Seeder
 {
     public function run(): void
     {
-        // Vider le cache Spatie
+        // Reset du cache Spatie (avant et après)
         app()[\Spatie\Permission\PermissionRegistrar::class]->forgetCachedPermissions();
 
         $guard = 'web';
 
-        // --- Permissions par domaine
+        // Abilities Caisse indispensables (middlewares & ServiceAccess::isGlobal)
+        $caisseAbilities = [
+            'caisse.access',
+            'caisse.session.manage',
+            'caisse.session.view',
+            'caisse.report.view',
+            'caisse.reglement.create',
+            'caisse.audit.view',      // ➕ pour Admin Caisse
+            'caisse.report.global',   // ➕ donne la portée transversale (tous services)
+        ];
+
+        // Permissions “app” existantes (on reprend les tiennes)
         $perms = [
             // 🌟 Alias simples (lecture/écriture)
             'patients.read', 'patients.write',
             'visites.read',  'visites.write',
+
+            // ➕ lookups front
+            'medecins.read', 'personnels.read', 'services.read', 'tarifs.read',
 
             // Patients
             'patients.view', 'patients.create', 'patients.update', 'patients.delete', 'patients.orient',
@@ -31,26 +45,27 @@ class RolesAndPermissionsSeeder extends Seeder
             'examen.view', 'examen.request.create', 'examen.result.write', 'examen.create',
 
             // Examens par service
-            'medecine.examen.create',
-            'aru.examen.create',
-            'gynecologie.examen.create',
-            'maternite.examen.create',
-            'pediatrie.examen.create',
-            'sanitaire.examen.create',
-            'consultations.examen.create',
-            'smi.examen.create',
+            'medecine.examen.create','aru.examen.create','gynecologie.examen.create','maternite.examen.create',
+            'pediatrie.examen.create','sanitaire.examen.create','consultations.examen.create','smi.examen.create',
 
-            // Tarifs (gestion des prix par l’admin)
+            // Tarifs
             'tarif.view', 'tarif.create', 'tarif.update', 'tarif.delete',
+            'tarifs.view', 'tarifs.create', 'tarifs.update', 'tarifs.delete',
 
             // Pharmacie
             'pharma.stock.view', 'pharma.sale.create', 'pharma.ordonnance.validate',
 
-            // Finance / Caisse
-            'finance.invoice.view', 'finance.invoice.create', 'finance.payment.create',
+            // Finance / Caisse (existants)
+            'caisse.facture.view', 'caisse.facture.create',
+            'caisse.reglement.view', 'caisse.reglement.create', 'caisse.reglement.validate',
 
             // Pansements
             'pansement.view', 'pansement.create', 'pansement.update', 'pansement.delete',
+
+            // Médecins / Personnels / Services (CRUDs)
+            'medecins.view', 'medecins.create', 'medecins.update', 'medecins.delete',
+            'personnels.view', 'personnels.create', 'personnels.update', 'personnels.delete',
+            'services.view', 'services.create', 'services.update', 'services.delete',
 
             // Autres modules de soins
             'aru.view', 'aru.create', 'aru.update', 'aru.delete',
@@ -76,17 +91,19 @@ class RolesAndPermissionsSeeder extends Seeder
             'pourcentage.view', 'pourcentage.update',
         ];
 
-        // Création / mise à jour des permissions
+        // Ajout des abilities Caisse
+        $perms = array_values(array_unique(array_merge($perms, $caisseAbilities)));
+
+        // Création/synchro des permissions
         foreach ($perms as $p) {
-            Permission::firstOrCreate(
-                ['name' => $p, 'guard_name' => $guard],
-                ['name' => $p, 'guard_name' => $guard]
-            );
+            Permission::firstOrCreate(['name' => $p, 'guard_name' => $guard]);
         }
 
-        // --- Rôles
+        // -----------------------------
+        //  RÔLES  (inclut les 3 caisses)
+        // -----------------------------
         $roles = [
-            // Admin : tout
+            // Admin : toutes les permissions
             'admin' => $perms,
 
             // Réception
@@ -94,6 +111,7 @@ class RolesAndPermissionsSeeder extends Seeder
                 'patients.read','patients.write',
                 'patients.view','patients.create','patients.orient',
                 'visites.read','visites.write',
+                'medecins.read','personnels.read','services.read','tarifs.read',
                 'stats.view',
             ],
 
@@ -103,7 +121,8 @@ class RolesAndPermissionsSeeder extends Seeder
                 'consultations.view','consultations.create','consultations.update',
                 'examen.create',
                 'medecine.examen.create','aru.examen.create','gynecologie.examen.create',
-                'maternite.examen.create','pediatrie.examen.create','sanitaire.examen.create','consultations.examen.create','smi.examen.create',
+                'maternite.examen.create','pediatrie.examen.create','sanitaire.examen.create',
+                'consultations.examen.create','smi.examen.create',
                 'stats.view',
             ],
 
@@ -117,7 +136,8 @@ class RolesAndPermissionsSeeder extends Seeder
             // Laborantin
             'laborantin' => [
                 'examen.view','examen.create','examen.request.create','examen.result.write',
-                'stats.view',
+                'stats.view','patients.read',
+                'services.read','tarifs.read','medecins.read',
             ],
 
             // Pharmacien
@@ -126,11 +146,49 @@ class RolesAndPermissionsSeeder extends Seeder
                 'stats.view',
             ],
 
-            // Caissier
+            // ✅ Caissier (rôle existant – on le garde)
             'caissier' => [
-                'finance.invoice.view','finance.invoice.create','finance.payment.create',
-                'visites.read',
-                'stats.view',
+                'caisse.access',
+                'caisse.session.view',
+                'caisse.session.manage',
+                'caisse.report.view',
+                'caisse.reglement.view',
+                'caisse.reglement.create',
+                'caisse.reglement.validate',
+                'visites.read','stats.view',
+                'services.read','tarifs.read','medecins.read','personnels.read',
+            ],
+
+            // ✅ 1) CAISSE DE SERVICE (limité aux services liés à l'utilisateur)
+            'caissier_service' => [
+                'caisse.access',
+                'caisse.session.view',
+                'caisse.session.manage',
+                'caisse.reglement.view',
+                'caisse.reglement.create',
+                // pas de 'caisse.report.global' ⇒ filtrage par ServiceAccess
+                'caisse.report.view',
+            ],
+
+            // ✅ 2) CAISSE GÉNÉRALE (lecture/encaissement multi-service)
+            'caissier_general' => [
+                'caisse.access',
+                'caisse.session.view',
+                'caisse.session.manage',
+                'caisse.reglement.view',
+                'caisse.reglement.create',
+                'caisse.report.view',
+                'caisse.report.global',  // ⇒ portée globale dans ServiceAccess
+            ],
+
+            // ✅ 3) ADMIN CAISSE (audit & global)
+            'admin_caisse' => [
+                'caisse.access',
+                'caisse.session.view',
+                'caisse.report.view',
+                'caisse.report.global',  // ⇒ portée globale
+                'caisse.audit.view',     // journal d'audit
+                // (facultatif) pas forcément encaissement
             ],
 
             // Gestionnaire
@@ -140,6 +198,7 @@ class RolesAndPermissionsSeeder extends Seeder
             ],
         ];
 
+        // Création/synchro des rôles
         foreach ($roles as $roleName => $allowed) {
             $role = Role::firstOrCreate(
                 ['name' => $roleName, 'guard_name' => $guard],
@@ -153,7 +212,7 @@ class RolesAndPermissionsSeeder extends Seeder
             $role->syncPermissions($allowedWithGuard);
         }
 
-        // Re-cache
+        // Re-cache final
         app()[\Spatie\Permission\PermissionRegistrar::class]->forgetCachedPermissions();
     }
 }

@@ -1,5 +1,4 @@
 <?php
-// app/Models/Patient.php
 namespace App\Models;
 
 use Illuminate\Database\Eloquent\Model;
@@ -53,7 +52,5 @@ class Patient extends Model
     }
 
     // Relations utiles
-    public function visites() { return $this->hasMany(Visite::class); }       // si tu utilises le module visites
-   //
-   // public function affectations() { return $this->hasMany(Affectation::class); } // si module présent
+    public function visites() { return $this->hasMany(Visite::class); }
 }

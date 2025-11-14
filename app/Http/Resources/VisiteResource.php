@@ -8,6 +8,16 @@ class VisiteResource extends JsonResource
 {
     public function toArray($request): array
     {
+        // Helper pour extraire le numéro de facture quelle que soit la colonne utilisée
+        $factureNumero = null;
+        if ($this->relationLoaded('facture') && $this->facture) {
+            $factureNumero = $this->facture->numero
+                ?? $this->facture->code
+                ?? $this->facture->reference
+                ?? $this->facture->ref
+                ?? null;
+        }
+
         return [
             'id' => $this->id,
 
@@ -32,14 +42,14 @@ class VisiteResource extends JsonResource
             'medecin' => [
                 'id'  => $this->medecin_id,
                 'nom' => $this->medecin_nom
-                    ?? $this->whenLoaded('medecin', fn() => $this->medecin?->full_name),
+                    ?? $this->whenLoaded('medecin', fn() => $this->medecin?->display),
             ],
 
             // Agent (snapshot prioritaire)
             'agent' => [
                 'id'  => $this->agent_id,
                 'nom' => $this->agent_nom
-                    ?? $this->whenLoaded('agent', fn() => $this->agent?->full_name),
+                    ?? $this->whenLoaded('agent', fn() => $this->agent?->name),
             ],
 
             'heure_arrivee'        => $this->heure_arrivee?->toISOString(),
@@ -49,7 +59,7 @@ class VisiteResource extends JsonResource
             'statut'               => $this->statut,
             'clos_at'              => $this->clos_at?->toISOString(),
 
-            // Prix (aligné à Tarif.montant)
+            // 💰 Prix
             'prix' => [
                 'tarif_id' => $this->tarif_id,
                 'tarif'    => $this->whenLoaded('tarif', fn () => [
@@ -62,6 +72,25 @@ class VisiteResource extends JsonResource
                 'montant_du'    => $this->when(isset($this->montant_du), (float) ($this->montant_du ?? 0)),
                 'devise'        => $this->when(isset($this->devise), $this->devise),
             ],
+
+            // 🧾 Facture (exposition directe du numéro pour le front)
+            'facture_numero' => $this->when($factureNumero !== null, $factureNumero),
+
+            // (Optionnel) bloc facture complet
+            'facture' => $this->whenLoaded('facture', function () {
+                return [
+                    'id'      => $this->facture->id,
+                    'numero'  => $this->facture->numero
+                                 ?? $this->facture->code
+                                 ?? $this->facture->reference
+                                 ?? $this->facture->ref
+                                 ?? null,
+                    'statut'  => $this->facture->statut ?? $this->facture->status ?? null,
+                    'total'   => isset($this->facture->montant_total) ? (float) $this->facture->montant_total : null,
+                    'devise'  => $this->facture->devise ?? null,
+                    'created_at' => $this->facture->created_at?->toISOString(),
+                ];
+            }),
 
             'created_at' => $this->created_at?->toISOString(),
             'updated_at' => $this->updated_at?->toISOString(),

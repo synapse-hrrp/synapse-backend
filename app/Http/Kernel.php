@@ -15,7 +15,7 @@ class Kernel extends HttpKernel
         \Illuminate\Foundation\Http\Middleware\ConvertEmptyStringsToNull::class,
         \Illuminate\Foundation\Http\Middleware\PreventRequestsDuringMaintenance::class,
 
-        // Optionnels : seulement si ces middlewares existent chez toi
+        // ➜ Supprime ces deux lignes si tes classes n'existent pas
         \App\Http\Middleware\SecurityHeaders::class,
         \App\Http\Middleware\ForceHttps::class,
     ];
@@ -31,9 +31,20 @@ class Kernel extends HttpKernel
         ],
 
         'api' => [
-            \App\Http\Middleware\SecurityHeaders::class, // si présent
-            'throttle:api',                               // ✅ alias recommandé
+            // ➜ supprime si la classe n'existe pas
+            \App\Http\Middleware\SecurityHeaders::class,
+
+            'throttle:api',
             \Illuminate\Routing\Middleware\SubstituteBindings::class,
         ],
+    ];
+
+    protected $routeMiddleware = [
+        // Middleware Caisse (ignoré en L11 mais OK de les garder)
+        'cashbox.open'    => \App\Http\Middleware\EnsureCashSessionOpen::class,
+        'cashbox.service' => \App\Http\Middleware\EnsurePaymentServiceScope::class,
+
+        // ✅ Seulement si la classe existe chez toi
+        'service.access'  => \App\Http\Middleware\EnsureServiceAccess::class,
     ];
 }

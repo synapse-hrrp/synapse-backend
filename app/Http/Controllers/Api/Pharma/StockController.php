@@ -25,7 +25,8 @@ class StockController extends Controller
     {
         $data = $request->validate([
             'article_id' => ['required','exists:pharma_articles,id'],
-            'lot_number' => ['required','string','max:100'],
+            'lot_id'     => ['nullable','exists:pharma_lots,id'],   // ✅ nouveau (sélection d’un lot existant)
+            'lot_number' => ['nullable','string','max:100'],        // ✅ devient optionnel
             'expires_at' => ['nullable','date'],
             'quantity'   => ['required','integer','min:1'],
             'unit_price' => ['nullable','numeric','min:0'], // buy_price
@@ -41,25 +42,45 @@ class StockController extends Controller
             $buy  = array_key_exists('unit_price', $data) ? $data['unit_price'] : $article->buy_price;
             $sell = array_key_exists('sell_price', $data) ? $data['sell_price'] : $article->sell_price;
 
-            // Créer ou récupérer le lot (clé composite article_id + lot_number)
-            $lot = PharmaLot::firstOrCreate(
-                ['article_id' => $article->id, 'lot_number' => trim($data['lot_number'])],
-                [
-                    'expires_at' => $data['expires_at'] ?? null,
-                    'quantity'   => 0,
-                    'buy_price'  => $buy,
-                    'sell_price' => $sell,
-                    'supplier'   => $data['supplier'] ?? null,
-                ]
-            );
+            // ✅ Déterminer le lot (priorité à lot_id, sinon lot_number fourni, sinon génération auto)
+            if (!empty($data['lot_id'])) {
+                // Sélection d’un lot existant (sécurisé)
+                $lot = PharmaLot::lockForUpdate()
+                    ->where('id', $data['lot_id'])
+                    ->where('article_id', $article->id)
+                    ->firstOrFail();
 
-            // Si le lot existait déjà, n’écrase pas ses prix par défaut,
-            // mais accepte les prix explicitement fournis
-            if (array_key_exists('unit_price', $data)) $lot->buy_price  = $buy;
-            if (array_key_exists('sell_price', $data)) $lot->sell_price = $sell;
-            if (array_key_exists('expires_at',$data)) $lot->expires_at  = $data['expires_at'];
-            if (array_key_exists('supplier',  $data)) $lot->supplier    = $data['supplier'];
+                // Si on fournit des champs, on peut mettre à jour
+                if (array_key_exists('unit_price', $data)) $lot->buy_price  = $buy;
+                if (array_key_exists('sell_price', $data)) $lot->sell_price = $sell;
+                if (array_key_exists('expires_at',$data)) $lot->expires_at  = $data['expires_at'];
+                if (array_key_exists('supplier',  $data)) $lot->supplier    = $data['supplier'];
+            } else {
+                // Création / récupération via lot_number OU génération auto si absent
+                $lotNumber = $data['lot_number'] ?? $this->generateLotNumber($article->id);
 
+                $lot = PharmaLot::firstOrCreate(
+                    ['article_id' => $article->id, 'lot_number' => trim($lotNumber)],
+                    [
+                        'expires_at' => $data['expires_at'] ?? null,
+                        'quantity'   => 0,
+                        'buy_price'  => $buy,
+                        'sell_price' => $sell,
+                        'supplier'   => $data['supplier'] ?? null,
+                    ]
+                );
+
+                // Si le lot existait déjà, n’écrase pas ses prix par défaut,
+                // mais accepte les prix explicitement fournis
+                if (!$lot->wasRecentlyCreated) {
+                    if (array_key_exists('unit_price', $data)) $lot->buy_price  = $buy;
+                    if (array_key_exists('sell_price', $data)) $lot->sell_price = $sell;
+                    if (array_key_exists('expires_at',$data)) $lot->expires_at  = $data['expires_at'];
+                    if (array_key_exists('supplier',  $data)) $lot->supplier    = $data['supplier'];
+                }
+            }
+
+            // MàJ quantité
             $lot->quantity += (int) $data['quantity'];
             $lot->save();
 
@@ -84,6 +105,7 @@ class StockController extends Controller
             ], 201);
         });
     }
+
 
     /*
     |--------------------------------------------------------------------------
@@ -538,4 +560,20 @@ class StockController extends Controller
             'lots'           => $payload,
         ]);
     }
+
+    /**
+     * Génère un numéro de lot unique : L<année>-<compteur> (ex: L2025-00023)
+     */
+    private function generateLotNumber(int $articleId): string
+    {
+        $year = now()->format('Y');
+        $prefix = "L{$year}-";
+
+        // Compte tous les lots de l'année (tous articles confondus).
+        // Si tu veux un compteur par article, ajoute ->where('article_id', $articleId)
+        $count = PharmaLot::where('lot_number', 'like', "{$prefix}%")->count() + 1;
+
+        return sprintf('%s%05d', $prefix, $count);
+    }
+
 }

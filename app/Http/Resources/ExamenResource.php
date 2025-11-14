@@ -6,91 +6,99 @@ use Illuminate\Http\Resources\Json\JsonResource;
 
 class ExamenResource extends JsonResource
 {
+    private function pick($model, array $keys)
+    {
+        foreach ($keys as $k) {
+            if (isset($model->{$k}) && $model->{$k} !== '') {
+                return $model->{$k};
+            }
+        }
+        return null;
+    }
+
     public function toArray($request)
     {
+        // Prépare noms/prénoms demandeur/validateur de façon robuste
+        $demandeurPersonnel = ($this->relationLoaded('demandeur') && $this->demandeur && $this->demandeur->relationLoaded('personnel'))
+            ? $this->demandeur->personnel
+            : null;
+
+        $validateurPerso = $this->relationLoaded('validateur') ? $this->validateur : null;
+
+        $dem_nom    = $demandeurPersonnel ? $this->pick($demandeurPersonnel, ['nom','last_name','surname','family_name','name']) : null;
+        $dem_prenom = $demandeurPersonnel ? $this->pick($demandeurPersonnel, ['prenom','first_name','given_name']) : null;
+        $dem_full   = trim(($dem_nom ?? '').' '.($dem_prenom ?? ''));
+
+        $val_nom    = $validateurPerso ? $this->pick($validateurPerso, ['nom','last_name','surname','family_name','name']) : null;
+        $val_prenom = $validateurPerso ? $this->pick($validateurPerso, ['prenom','first_name','given_name']) : null;
+        $val_full   = trim(($val_nom ?? '').' '.($val_prenom ?? ''));
+
         return [
-            // Ids / ancrages
+            // Ancrages
             'id'             => $this->id,
             'patient_id'     => $this->patient_id,
             'service_slug'   => $this->service_slug,
 
-            // Traçabilité d’origine
-            'created_via'        => $this->created_via,       // 'labo' | 'service'
-            'created_by_user_id' => $this->created_by_user_id,
-            'type_origine'       => $this->type_origine,      // 'interne' | 'externe'
+            // Origine
+            'created_via'    => $this->created_via,
+            'type_origine'   => $this->type_origine,
 
-            // Tarification (exposition côté API)
-            'tarif_code'     => $this->code_examen,           // alias pratique
-            'code_examen'    => $this->code_examen,           // compat
+            // Examen / tarification
+            'code_examen'    => $this->code_examen,
             'nom_examen'     => $this->nom_examen,
             'prix'           => $this->prix,
             'devise'         => $this->devise,
-            // 'tarif_id'     => $this->tarif_id ?? null,     // dé-commente si tu ajoutes la colonne
 
-            // Médical
-            'prelevement'          => $this->prelevement,
-            'statut'               => $this->statut,          // en_attente | en_cours | termine | valide
-            'valeur_resultat'      => $this->valeur_resultat,
-            'unite'                => $this->unite,
-            'intervalle_reference' => $this->intervalle_reference,
-            'resultat_json'        => $this->resultat_json,
-
-            // Demande/validation
-            'demande_par'     => $this->demande_par,
+            // Statuts / dates
+            'statut'          => $this->statut,
             'date_demande'    => optional($this->date_demande)->toISOString(),
-            'valide_par'      => $this->valide_par,
             'date_validation' => optional($this->date_validation)->toISOString(),
 
-            // Facturation (id direct)
+            // Facturation (plats + résumé facture)
             'facture_id'      => $this->facture_id,
+            'facture_numero'  => $this->when($this->relationLoaded('facture'), optional($this->facture)->numero),
 
-            // Métadonnées temporelles
+            // Timestamps
             'created_at'      => optional($this->created_at)->toISOString(),
             'updated_at'      => optional($this->updated_at)->toISOString(),
-            'deleted_at'      => optional($this->deleted_at)->toISOString(),
 
-            // Relations légères
+            // Relations
+            'patient' => $this->whenLoaded('patient', fn () => [
+                'id'             => $this->patient->id,
+                'nom'            => $this->pick($this->patient, ['nom','last_name','surname','family_name','name']),
+                'prenom'         => $this->pick($this->patient, ['prenom','first_name','given_name']),
+                'numero_dossier' => $this->patient->numero_dossier ?? null,
+            ]),
+
             'service' => $this->whenLoaded('service', fn () => [
                 'slug' => $this->service->slug,
                 'name' => $this->service->name ?? null,
             ]),
 
             'demandeur' => $this->whenLoaded('demandeur', fn () => [
-                'id'        => $this->demandeur->id,
-                'full_name' => $this->demandeur->full_name ?? null,
-                'job_title' => $this->demandeur->job_title ?? null,
+                'id'           => $this->demandeur->id,
+                'personnel_id' => $this->demandeur->personnel_id,
+                'nom'          => $dem_nom,
+                'prenom'       => $dem_prenom,
+                'full_name'    => $dem_full !== '' ? $dem_full : ($this->demandeur->full_name ?? null),
             ]),
 
             'validateur' => $this->whenLoaded('validateur', fn () => [
                 'id'        => $this->validateur->id,
-                'full_name' => $this->validateur->full_name ?? null,
-                'job_title' => $this->validateur->job_title ?? null,
+                'nom'       => $val_nom,
+                'prenom'    => $val_prenom,
+                'full_name' => $val_full !== '' ? $val_full : ($this->validateur->full_name ?? null),
             ]),
 
-            'patient' => $this->whenLoaded('patient', fn () => [
-                'id' => $this->patient->id,
-                // ajoute d’autres champs patient si dispo
-            ]),
-
-            // (Optionnel) facture compacte si tu fais ->load('facture.lignes')
+            // 🔎 Détail facture complet (affichera bien statut/montants/date)
             'facture' => $this->whenLoaded('facture', fn () => [
                 'id'            => $this->facture->id,
-                'numero'        => $this->facture->numero ?? null,
-                'statut'        => $this->facture->statut ?? null,
-                'montant_total' => $this->facture->montant_total ?? null,
-                'montant_du'    => $this->facture->montant_du ?? null,
-                'devise'        => $this->facture->devise ?? null,
+                'numero'        => $this->facture->numero,
+                'statut'        => $this->facture->statut,
+                'montant_total' => $this->facture->montant_total,
+                'montant_du'    => $this->facture->montant_du,
+                'devise'        => $this->facture->devise,
                 'created_at'    => optional($this->facture->created_at)->toISOString(),
-                'lignes'        => $this->when($this->facture->relationLoaded('lignes'), function () {
-                    return $this->facture->lignes->map(fn ($l) => [
-                        'id'            => $l->id,
-                        'designation'   => $l->designation,
-                        'quantite'      => $l->quantite,
-                        'prix_unitaire' => $l->prix_unitaire,
-                        'montant'       => $l->montant,
-                        'tarif_id'      => $l->tarif_id,
-                    ]);
-                }),
             ]),
         ];
     }

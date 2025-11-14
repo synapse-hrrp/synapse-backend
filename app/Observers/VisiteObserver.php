@@ -3,63 +3,85 @@
 namespace App\Observers;
 
 use App\Models\Visite;
+use Illuminate\Support\Str;
 use Illuminate\Support\Facades\Schema;
 
 class VisiteObserver
 {
     public function created(Visite $visite): void
     {
-        // 1) Récup config du service
+        // 1) Récup service + config
         $service = $visite->service()->first(['id','slug','config']);
-        if (!$service) return;
+        if (! $service) return;
 
-        $cfg = is_array($service->config) ? $service->config : [];
+        $slug = (string) $service->slug;
+        $cfg  = is_array($service->config) ? $service->config : [];
 
-        $modelClass = method_exists($service, 'detailModelClass')
-            ? ($service->detailModelClass() ?? ($cfg['detail_model'] ?? null))
-            : ($cfg['detail_model'] ?? null);
+        // 2) Trouver le modèle "détail" à créer:
+        //    a) D'abord un modèle dédié par slug: App\Models\{StudlySlug}
+        //    b) Sinon, la config 'detail_model' si fournie et existante
+        //    c) Sinon fallback sur App\Models\Consultation s'il existe
+        $studly = Str::of($slug)->studly()->toString(); // ex. medecine -> Medecine
+        $candidates = [
+            "\\App\\Models\\{$studly}",
+        ];
 
-        $fk = method_exists($service, 'detailFk')
-            ? ($service->detailFk() ?? ($cfg['detail_fk'] ?? 'visite_id'))
-            : ($cfg['detail_fk'] ?? 'visite_id');
+        // Optionnel: si tu ranges certains modèles ailleurs, ajoute d'autres namespaces ici
+        // $candidates[] = "\\App\\Models\\Services\\{$studly}";
 
-        if (!$modelClass || !class_exists($modelClass)) return;
+        if (!empty($cfg['detail_model']) && is_string($cfg['detail_model'])) {
+            $candidates[] = $cfg['detail_model'];
+        }
 
-        // On instancie pour récupérer la table et pouvoir faire des fallbacks
+        // fallback générique
+        $candidates[] = "\\App\\Models\\Consultation";
+
+        $modelClass = null;
+        foreach ($candidates as $cls) {
+            if (class_exists($cls)) { $modelClass = $cls; break; }
+        }
+        if (! $modelClass) return;
+
         /** @var \Illuminate\Database\Eloquent\Model $detail */
         $detail = new $modelClass;
         $detailTable = $detail->getTable();
 
-        // 2) Déterminer le champ docteur à setter
-        //    - priorité à la config: detail_doctor_field
-        //    - sinon fallback auto: si la table a une colonne 'soignant_id', on l'utilise
-        $doctorFieldName = $cfg['detail_doctor_field']
-            ?? (Schema::hasColumn($detailTable, 'soignant_id') ? 'soignant_id' : null);
-
-        // 3) Exiger un médecin si nécessaire
-        //    - priorité à la config: require_doctor_for_detail
-        //    - sinon fallback auto: si la table a 'soignant_id', on considère le médecin requis
-        $requireDoctor = array_key_exists('require_doctor_for_detail', $cfg)
-            ? (bool)$cfg['require_doctor_for_detail']
-            : (Schema::hasColumn($detailTable, 'soignant_id'));
-
-        if ($requireDoctor && empty($visite->medecin_id)) {
-            // Sécurité: si le médecin est requis mais absent, on ne crée pas le détail
-            // (Normalement ton VisiteController bloque déjà la création de la visite sans medecin_id)
+        // 3) Déterminer la FK (par défaut 'visite_id' si la colonne existe)
+        $fk = $cfg['detail_fk'] ?? 'visite_id';
+        if (! Schema::hasColumn($detailTable, $fk)) {
+            // Petite sécurité: si la table n'a pas 'visite_id', on ne force pas la création
             return;
         }
 
-        // 4) Construire le payload
+        // 4) Déterminer le champ docteur:
+        //    - priorité config: detail_doctor_field
+        //    - sinon auto: soignant_id puis medecin_id si la colonne existe
+        $doctorFieldName = $cfg['detail_doctor_field'] ?? null;
+        if (! $doctorFieldName) {
+            if (Schema::hasColumn($detailTable, 'soignant_id')) {
+                $doctorFieldName = 'soignant_id';
+            } elseif (Schema::hasColumn($detailTable, 'medecin_id')) {
+                $doctorFieldName = 'medecin_id';
+            }
+        }
+
+        // 5) Exiger un médecin ? (par défaut false)
+        $requireDoctor = (bool)($cfg['require_doctor_for_detail'] ?? false);
+        if ($requireDoctor && empty($visite->medecin_id)) {
+            // on ne crée pas le détail si explicitement requis et absent
+            return;
+        }
+
+        // 6) Construire le payload de création
         $payload = [
             'patient_id' => $visite->patient_id ?? null,
             'service_id' => $visite->service_id ?? null,
         ];
 
-        if ($doctorFieldName && !array_key_exists($doctorFieldName, $payload) && !empty($visite->medecin_id)) {
-            $payload[$doctorFieldName] = $visite->medecin_id; // ← clé pour ARU
+        if ($doctorFieldName && Schema::hasColumn($detailTable, $doctorFieldName) && !empty($visite->medecin_id)) {
+            $payload[$doctorFieldName] = $visite->medecin_id;
         }
 
-        // Defaults additionnels depuis la config
         if (!empty($cfg['detail_defaults']) && is_array($cfg['detail_defaults'])) {
             foreach ($cfg['detail_defaults'] as $k => $v) {
                 if (!array_key_exists($k, $payload)) {
@@ -68,10 +90,12 @@ class VisiteObserver
             }
         }
 
-        // 5) Création idempotente
+        // 7) Création idempotente (indexée par visite_id)
         $detail::firstOrCreate([$fk => $visite->id], $payload);
 
-         // Crée automatiquement la facture de la visite
-        app(\App\Services\VisitInvoiceService::class)->createForVisite($visite);
+        // 8) Facture auto
+        if (class_exists(\App\Services\VisitInvoiceService::class)) {
+            app(\App\Services\VisitInvoiceService::class)->createForVisite($visite);
+        }
     }
 }

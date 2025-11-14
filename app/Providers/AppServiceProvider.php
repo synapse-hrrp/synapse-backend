@@ -34,11 +34,15 @@ use App\Models\Pharmacie\Dci;
 use App\Observers\PharmaArticleObserver;
 use App\Observers\DciObserver;
 
+// ✅ Ajout: binding ServiceAccess
+use App\Support\ServiceAccess;
+
 class AppServiceProvider extends ServiceProvider
 {
     public function register(): void
     {
-        //
+        // ✅ Singleton ServiceAccess (ajouté)
+        $this->app->singleton(ServiceAccess::class, fn() => new ServiceAccess());
     }
 
     public function boot(): void
