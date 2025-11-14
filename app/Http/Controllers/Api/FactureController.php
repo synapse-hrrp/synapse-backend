@@ -11,7 +11,6 @@ use Illuminate\Support\Facades\DB;
 use Illuminate\Validation\Rule;
 use Illuminate\Validation\ValidationException;
 use Symfony\Component\HttpFoundation\Response;
-use App\Support\ServiceAccess; // 👈 IMPORTANT
 
 class FactureController extends Controller
 {
@@ -128,20 +127,54 @@ class FactureController extends Controller
         }
 
         /**
-         * 🔐 FILTRAGE PAR RÔLE / SERVICE (via ServiceAccess)
+         * 🔐 FILTRAGE PAR RÔLE / SERVICE
          *
          * - admin, admin_caisse, caissier_general  → accès global
-         * - caissier_service (et autres)           → limité aux services autorisés
+         * - caissier_service (et autres)           → limité aux services qui lui sont affectés
          */
-        if ($user = $r->user()) {
-            /** @var ServiceAccess $access */
-            $access = app(ServiceAccess::class);
+        $user = $r->user();
 
-            if (! $access->isGlobal($user)) {
-                $allowed = $access->allowedServiceIds($user);
-                $allowed = array_values(array_unique(array_map('intval', $allowed)));
+        if ($user) {
+            $isGlobalCash = $user->hasAnyRole([
+                'admin',
+                'admin_caisse',
+                'caissier_general',
+            ]);
+
+            if (! $isGlobalCash) {
+                // On récupère les services du user (pivot user_service) + service principal du personnel
+                $user->loadMissing(['services', 'personnel.service']);
+
+                $allowed = [];
+
+                // services via pivot user_service
+                foreach ($user->services as $svc) {
+                    if ($svc && $svc->id) {
+                        $allowed[] = (int) $svc->id;
+                    }
+                }
+
+                // service principal (personnel.service_id)
+                if ($user->personnel?->service_id) {
+                    $allowed[] = (int) $user->personnel->service_id;
+                }
+
+                if ($user->personnel?->service?->id) {
+                    $allowed[] = (int) $user->personnel->service->id;
+                }
+
+                $allowed = array_values(array_unique(array_filter($allowed)));
+
+                // 🔍 DEBUG ICI : on inspecte ce que voit le backend pour le caissier
+                dd([
+                    'user_id'             => $user->id,
+                    'user_name'           => $user->name,
+                    'roles'               => $user->roles->pluck('name')->values(),
+                    'allowed_service_ids' => $allowed,
+                ]);
 
                 if (! empty($allowed)) {
+                    // On restreint aux factures dont la visite est dans l'un des services autorisés
                     $q->whereHas('visite', function ($vv) use ($allowed) {
                         $vv->whereIn('service_id', $allowed);
                     });
@@ -247,7 +280,7 @@ class FactureController extends Controller
                     'patient_id'    => $visite->patient_id,
                     'montant_total' => $visite->montant_prevu ?? 0,
                     'montant_du'    => $visite->montant_du ?? ($visite->montant_prevu ?? 0),
-                    'devise'        => $visite->devise ?? 'CDF',
+                    'devise'        => $visite->devise ?? 'CDF', // garde ton choix initial
                     'statut'        => 'IMPAYEE',
                 ]);
 
@@ -273,7 +306,7 @@ class FactureController extends Controller
                 'patient_id'    => $data['patient_id'] ?? null,
                 'montant_total' => 0,
                 'montant_du'    => 0,
-                'devise'        => $data['devise'] ?? 'XAF',
+                'devise'        => $data['devise'] ?? 'XAF', // défaut caisse
                 'statut'        => 'IMPAYEE',
             ]);
 
