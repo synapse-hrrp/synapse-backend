@@ -156,4 +156,14 @@ class Personnel extends Model
 
         return $base . '/storage/' . $p; // http://host:port/storage/avatars/a.jpg
     }
+
+
+
+    // App\Models\Personnel.php
+
+    public function reglementsAsCashier()
+    {
+        return $this->hasMany(Reglement::class, 'cashier_id');
+    }
+
 }

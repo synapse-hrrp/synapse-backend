@@ -19,10 +19,10 @@ class Reglement extends Model
         'reference',
 
         // ✅ champs caisse
-        'cashier_id',
+        'cashier_id',     // -> personnels.id
         'cash_session_id',
         'workstation',
-        'service_id', // ← recommandé par la spec (si colonne présente)
+        'service_id',
     ];
 
     protected $casts = [
@@ -31,21 +31,21 @@ class Reglement extends Model
 
     protected static function booted(): void
     {
-        // UUID + devise auto
         static::creating(function (self $r) {
             if (! $r->id) {
                 $r->id = (string) Str::uuid();
             }
+
             if (! $r->devise && $r->facture) {
-                $r->devise = $r->facture->devise; // cohérent avec ta colonne "devise"
+                $r->devise = $r->facture->devise;
             }
-            // Si la session est bornée à un service, force le service_id du règlement (optionnel)
+
+            // si la session est liée à un service, on propage
             if (! $r->service_id && $r->cashSession && $r->cashSession->service_id) {
                 $r->service_id = $r->cashSession->service_id;
             }
         });
 
-        // Recalc après création/suppression/màj
         $recalc = fn(self $r) => $r->facture?->recalc();
         static::created($recalc);
         static::updated($recalc);
@@ -53,8 +53,24 @@ class Reglement extends Model
     }
 
     /* -------- Relations -------- */
-    public function facture()     { return $this->belongsTo(Facture::class); }
-    public function cashier()     { return $this->belongsTo(User::class, 'cashier_id'); }
-    public function cashSession() { return $this->belongsTo(CashRegisterSession::class, 'cash_session_id'); }
-    public function service()     { return $this->belongsTo(Service::class); } // si colonne présente
+    public function facture()
+    {
+        return $this->belongsTo(Facture::class);
+    }
+
+    // ✅ le caissier est un Personnel, pas directement un User
+    public function cashier()
+    {
+        return $this->belongsTo(Personnel::class, 'cashier_id');
+    }
+
+    public function cashSession()
+    {
+        return $this->belongsTo(CashRegisterSession::class, 'cash_session_id');
+    }
+
+    public function service()
+    {
+        return $this->belongsTo(Service::class);
+    }
 }
