@@ -810,7 +810,7 @@ Route::prefix('v1')->group(function () {
         Route::delete('echographies/{echographie}', [EchographieController::class, 'destroy'])
             ->middleware('ability:echographies.delete')->name('v1.echographies.destroy');
 
-        Route::post('echographies/{id}/restore', [EchographieController::class, 'restore'])
+        Route::post(  'echographies/{id}/restore', [EchographieController::class, 'restore'])
             ->middleware('ability:echographies.update')->name('v1.echographies.restore');
 
         Route::post('services/{service}/echographies', [EchographieController::class, 'storeForService'])
@@ -904,80 +904,54 @@ Route::prefix('v1')->group(function () {
         ->group(function () {
 
             // DCI
-            Route::get('dcis/options', [DciController::class,'options'])
-                ->middleware('ability:pharma.dci.view');
+            Route::get('dcis/options', [DciController::class,'options']);
 
             Route::apiResource('dcis', DciController::class)
-                ->only(['index','show'])
-                ->middleware('ability:pharma.dci.view');
+                ->only(['index','show']);
 
             Route::apiResource('dcis', DciController::class)
-                ->only(['store','update','destroy'])
-                ->middleware('ability:pharma.dci.manage');
+                ->only(['store','update','destroy']);
 
             // Articles
-            Route::get('articles/options', [ArticleController::class,'options'])
-                ->middleware('ability:pharma.article.view');
+            Route::get('articles/options', [ArticleController::class,'options']);
 
             Route::apiResource('articles', ArticleController::class)
                 ->parameters(['articles' => 'article'])
-                ->only(['index','show'])
-                ->middleware('ability:pharma.article.view');
+                ->only(['index','show']);
 
             Route::apiResource('articles', ArticleController::class)
                 ->parameters(['articles' => 'article'])
-                ->only(['store','update','destroy'])
-                ->middleware('ability:pharma.article.manage');
+                ->only(['store','update','destroy']);
 
-            Route::get('dcis/{dci}/articles', [ArticleController::class, 'byDci'])
-                ->middleware('ability:pharma.article.view');
+            Route::get('dcis/{dci}/articles', [ArticleController::class, 'byDci']);
 
-            Route::get('substitutes', [ArticleController::class, 'substitutes'])
-                ->middleware('ability:pharma.article.view');
+            Route::get('substitutes', [ArticleController::class, 'substitutes']);
 
-            Route::post('articles/{article}/image', [ArticleController::class, 'updateImage'])
-                ->middleware('ability:pharma.article.manage');
+            Route::post('articles/{article}/image', [ArticleController::class, 'updateImage']);
 
-            Route::get('articles/{article}/equivalents', [\App\Http\Controllers\Api\Pharma\ArticleController::class, 'equivalents'])
-                ->middleware('ability:pharma.article.view');
+            Route::get('articles/{article}/equivalents', [\App\Http\Controllers\Api\Pharma\ArticleController::class, 'equivalents']);
 
             // Stock
-            Route::post('stock/in',     [StockController::class,'in'])
-                ->middleware('ability:pharma.stock.in');
-            Route::post('stock/out',    [StockController::class,'out'])
-                ->middleware('ability:pharma.stock.out');
-            Route::post('stock/adjust', [StockController::class,'adjust'])
-                ->middleware('ability:pharma.stock.adjust');
+            Route::post('stock/in',     [StockController::class,'in']);
+            Route::post('stock/out',    [StockController::class,'out']);
+            Route::post('stock/adjust', [StockController::class,'adjust']);
 
-            Route::get('stock/movements',   [StockController::class,'movements'])
-                ->middleware('ability:pharma.stock.view');
-            Route::get('stock/summary',     [StockController::class,'summary'])
-                ->middleware('ability:pharma.stock.view');
-            Route::get('stock/top-sellers', [StockController::class,'topSellers'])
-                ->middleware('ability:pharma.stock.view');
-            Route::get('stock/oldest-lots', [StockController::class,'oldestLots'])
-                ->middleware('ability:pharma.stock.view');
-            Route::get('stock/alerts',      [StockController::class,'alerts'])
-                ->middleware('ability:pharma.stock.view');
-            Route::post('stock/thresholds', [StockController::class,'setThresholds'])
-                ->middleware('ability:pharma.article.manage');
+            Route::get('stock/movements',   [StockController::class,'movements']);
+            Route::get('stock/summary',     [StockController::class,'summary']);
+            Route::get('stock/top-sellers', [StockController::class,'topSellers']);
+            Route::get('stock/oldest-lots', [StockController::class,'oldestLots']);
+            Route::get('stock/alerts',      [StockController::class,'alerts']);
+            Route::post('stock/thresholds', [StockController::class,'setThresholds']);
 
-            Route::get('lots', [StockController::class, 'lots'])
-                ->middleware('ability:pharma.stock.view');
+            Route::get('lots', [StockController::class, 'lots']);
 
             // Panier
-            Route::post('carts', [CartController::class,'store'])
-                ->middleware('ability:pharma.cart.manage');
-            Route::get('carts/{cart}', [CartController::class,'show'])
-                ->middleware('ability:pharma.cart.manage');
-            Route::post('carts/{cart}/lines', [CartController::class,'addLine'])
-                ->middleware('ability:pharma.cart.manage');
-            Route::patch('carts/{cart}/lines/{line}', [CartController::class,'updateLine'])
-                ->middleware('ability:pharma.cart.manage');
-            Route::delete('carts/{cart}/lines/{line}', [CartController::class,'removeLine'])
-                ->middleware('ability:pharma.cart.manage');
-            Route::post('carts/{cart}/checkout', [CartController::class,'checkout'])
-                ->middleware('ability:pharma.cart.checkout');
+            Route::post('carts', [CartController::class,'store']);
+            Route::get('carts/{cart}', [CartController::class,'show']);
+            Route::post('carts/{cart}/lines', [CartController::class,'addLine']);
+            Route::patch('carts/{cart}/lines/{line}', [CartController::class,'updateLine']);
+            Route::delete('carts/{cart}/lines/{line}', [CartController::class,'removeLine']);
+            Route::post('carts/{cart}/checkout', [CartController::class,'checkout']);
         });
 
     // ────────────────────────────────────────────────
