@@ -3,7 +3,7 @@
 namespace App\Http\Controllers\Api;
 
 use App\Http\Controllers\Controller;
-use App\Models\{Facture, FactureLigne, Visite};
+use App\Models\{Facture, FactureLigne, Visite, Service};
 use Barryvdh\DomPDF\Facade\Pdf;
 use Illuminate\Http\Request;
 use Illuminate\Http\JsonResponse;
@@ -11,29 +11,12 @@ use Illuminate\Support\Facades\DB;
 use Illuminate\Validation\Rule;
 use Illuminate\Validation\ValidationException;
 use Symfony\Component\HttpFoundation\Response;
+use App\Support\ServiceAccess; // 👈 IMPORTANT
 
 class FactureController extends Controller
 {
     /**
      * GET /factures
-     * Filtres supportés :
-     * - numero (LIKE)
-     * - q (recherche : numero | patient.nom | patient.prenom | patient.telephone)
-     * - patient_id (UUID)
-     * - statut (IMPAYEE|PARTIELLE|PAYEE|ANNULEE|…)
-     * - devise (size:3)
-     * - date_from / date_to (date)
-     * - service_id (int)  → filtre via la visite
-     * - total_min / total_max (numeric)
-     * - due_min / due_max (numeric)
-     * - has_due (bool)    → montant_du > 0 si true, = 0 si false
-     * - with[] (relations) : lignes|reglements|visite|patient
-     * - sort_by (created_at|numero|montant_total|montant_du) + sort_dir (asc|desc)
-     * - per_page (1..200), page (>=1)
-     *
-     * 🔐 IMPORTANT :
-     *  - caissier_service  → uniquement factures des services qui lui sont affectés
-     *  - caissier_general / admin_caisse / admin → accès global à toutes les factures
      */
     public function index(Request $r): JsonResponse
     {
@@ -95,9 +78,35 @@ class FactureController extends Controller
             $q->whereDate('created_at', '<=', $v['date_to']);
         }
 
-        // Filtre par service via la Visite (paramètre explicite)
+        /**
+         * 🔎 Filtre par service explicite (paramètre service_id)
+         * On tient compte :
+         *  - factures.service_id (colonne directe)
+         *  - visites.service_id
+         *  - examens.service_slug
+         */
         if (!empty($v['service_id'])) {
-            $q->whereHas('visite', fn($vv) => $vv->where('service_id', (int)$v['service_id']));
+            $serviceId = (int) $v['service_id'];
+
+            // récupérer le slug du service pour matcher les examens
+            $slug = Service::where('id', $serviceId)->value('slug');
+
+            $q->where(function ($sub) use ($serviceId, $slug) {
+                // 1) via factures.service_id
+                $sub->where('service_id', $serviceId);
+
+                // 2) via visite.service_id
+                $sub->orWhereHas('visite', function ($vv) use ($serviceId) {
+                    $vv->where('service_id', $serviceId);
+                });
+
+                // 3) via examens.service_slug
+                if ($slug) {
+                    $sub->orWhereHas('examens', function ($ve) use ($slug) {
+                        $ve->where('service_slug', $slug);
+                    });
+                }
+            });
         }
 
         // Montants (total et dû)
@@ -127,56 +136,43 @@ class FactureController extends Controller
         }
 
         /**
-         * 🔐 FILTRAGE PAR RÔLE / SERVICE
+         * 🔐 FILTRAGE PAR RÔLE / SERVICE (via ServiceAccess)
          *
-         * - admin, admin_caisse, caissier_general  → accès global
-         * - caissier_service (et autres)           → limité aux services qui lui sont affectés
+         * - admin, admin_caisse, caissier_general → accès global
+         * - caissier_service (et autres)          → limité aux services autorisés
+         *
+         * On tient compte des factures :
+         *   - factures.service_id
+         *   - visites.service_id
+         *   - examens.service_slug
          */
-        $user = $r->user();
+        if ($user = $r->user()) {
+            /** @var ServiceAccess $access */
+            $access = app(ServiceAccess::class);
 
-        if ($user) {
-            $isGlobalCash = $user->hasAnyRole([
-                'admin',
-                'admin_caisse',
-                'caissier_general',
-            ]);
+            if (! $access->isGlobal($user)) {
+                $allowedIds = $access->allowedServiceIds($user);
+                $allowedIds = array_values(array_unique(array_map('intval', $allowedIds)));
 
-            if (! $isGlobalCash) {
-                // On récupère les services du user (pivot user_service) + service principal du personnel
-                $user->loadMissing(['services', 'personnel.service']);
+                if (! empty($allowedIds)) {
+                    // On récupère les slugs correspondant aux services autorisés
+                    $allowedSlugs = Service::whereIn('id', $allowedIds)->pluck('slug')->all();
 
-                $allowed = [];
+                    $q->where(function ($sub) use ($allowedIds, $allowedSlugs) {
+                        // 1) factures qui ont directement service_id
+                        $sub->whereIn('service_id', $allowedIds);
 
-                // services via pivot user_service
-                foreach ($user->services as $svc) {
-                    if ($svc && $svc->id) {
-                        $allowed[] = (int) $svc->id;
-                    }
-                }
+                        // 2) factures liées à une visite (consultations, etc.)
+                        $sub->orWhereHas('visite', function ($vv) use ($allowedIds) {
+                            $vv->whereIn('service_id', $allowedIds);
+                        });
 
-                // service principal (personnel.service_id)
-                if ($user->personnel?->service_id) {
-                    $allowed[] = (int) $user->personnel->service_id;
-                }
-
-                if ($user->personnel?->service?->id) {
-                    $allowed[] = (int) $user->personnel->service->id;
-                }
-
-                $allowed = array_values(array_unique(array_filter($allowed)));
-
-                // 🔍 DEBUG ICI : on inspecte ce que voit le backend pour le caissier
-                dd([
-                    'user_id'             => $user->id,
-                    'user_name'           => $user->name,
-                    'roles'               => $user->roles->pluck('name')->values(),
-                    'allowed_service_ids' => $allowed,
-                ]);
-
-                if (! empty($allowed)) {
-                    // On restreint aux factures dont la visite est dans l'un des services autorisés
-                    $q->whereHas('visite', function ($vv) use ($allowed) {
-                        $vv->whereIn('service_id', $allowed);
+                        // 3) factures d'examens (labo, imagerie, etc.)
+                        if (!empty($allowedSlugs)) {
+                            $sub->orWhereHas('examens', function ($ve) use ($allowedSlugs) {
+                                $ve->whereIn('service_slug', $allowedSlugs);
+                            });
+                        }
                     });
                 } else {
                     // Aucun service autorisé => aucune facture visible
@@ -224,7 +220,6 @@ class FactureController extends Controller
 
     /**
      * GET /factures/{id}
-     * Param optionnel: with[]=lignes&with[]=reglements&with[]=visite&with[]=patient
      */
     public function show(Request $r, string $id): JsonResponse
     {
@@ -278,16 +273,17 @@ class FactureController extends Controller
                 $facture = Facture::create([
                     'visite_id'     => $visite->id,
                     'patient_id'    => $visite->patient_id,
+                    'service_id'    => $visite->service_id, // 👈 on copie aussi ici si tu veux
                     'montant_total' => $visite->montant_prevu ?? 0,
                     'montant_du'    => $visite->montant_du ?? ($visite->montant_prevu ?? 0),
-                    'devise'        => $visite->devise ?? 'CDF', // garde ton choix initial
+                    'devise'        => $visite->devise ?? 'CDF',
                     'statut'        => 'IMPAYEE',
                 ]);
 
                 FactureLigne::create([
                     'facture_id'    => $facture->id,
                     'tarif_id'      => $visite->tarif_id,
-                    'designation'   => $visite->service->nom ?? 'Consultation',
+                    'designation'   => $visite->service->name ?? $visite->service->nom ?? 'Consultation',
                     'quantite'      => 1,
                     'prix_unitaire' => $visite->montant_prevu ?? 0,
                     'montant'       => $visite->montant_prevu ?? 0,
@@ -304,9 +300,10 @@ class FactureController extends Controller
             $facture = Facture::create([
                 'visite_id'     => null,
                 'patient_id'    => $data['patient_id'] ?? null,
+                'service_id'    => null,
                 'montant_total' => 0,
                 'montant_du'    => 0,
-                'devise'        => $data['devise'] ?? 'XAF', // défaut caisse
+                'devise'        => $data['devise'] ?? 'XAF',
                 'statut'        => 'IMPAYEE',
             ]);
 

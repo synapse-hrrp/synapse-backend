@@ -45,10 +45,17 @@ class AuthController extends Controller
             return response()->json(['message' => 'Compte inactif.'], 403);
         }
 
-        $isAdmin = method_exists($user, 'hasAnyRole') ? $user->hasAnyRole(['admin','dg','superuser']) : false; // ✅ inclut superuser
+        $isAdmin = method_exists($user, 'hasAnyRole')
+            ? $user->hasAnyRole(['admin','dg','superuser'])
+            : false;
 
         if ($isAdmin) {
-            $abilities = ['*'];
+            // 👇 Admin a tout + le droit explicite sur le rapport caisse
+            $abilities = [
+                '*',
+                'caisse.report.view',
+                'caisse.report.export',
+            ];
         } else {
             // Permissions Spatie -> abilities Sanctum (en lowercase)
             $abilities = method_exists($user, 'getAllPermissions')
@@ -59,23 +66,21 @@ class AuthController extends Controller
                     ->all()
                 : [];
 
-            // ✅ Ajoute des alias CRUD pour éviter les 403 entre read/view/write/create/update/delete
+            // Aliases CRUD
             $abilities = $this->expandAbilities($abilities);
 
-            // ✅ Assure les abilities Caisse attendues par tes middlewares
+            // Abilities caisse (session + encaissement)
             $abilities = $this->ensureCaisseAbilities($abilities);
-
-            // ✅ Si rôle caissier, rajoute le minimum vital caisse.*
             $abilities = $this->ensureCaisseAbilitiesFromRoles($user, $abilities);
 
-            // ✅ Si rôle réception, force les abilities patients/visites + lookups
+            // Réception
             $abilities = $this->ensureReceptionAbilitiesFromRoles($user, $abilities);
 
-            // ✅ Lookups annexes si patients/visites (utile au front)
+            // Lookups annexes
             $abilities = $this->ensureLookupsFromAbilities($abilities);
         }
 
-        // Révoquer les anciens tokens (facultatif)
+        // Révoquer les anciens tokens (optionnel)
         try { $user->tokens()->delete(); } catch (\Throwable $e) {}
 
         $device    = $data['device_name'] ?? 'api';
@@ -104,11 +109,27 @@ class AuthController extends Controller
             ])->save();
         } catch (\Throwable $e) {}
 
-        // Charger le personnel minimal pour l’avatar dans le header
+        // Charger personnel + service principal + services autorisés (caisse)
         $user->load([
             'personnel:id,user_id,first_name,last_name,avatar_path,service_id',
             'personnel.service:id,slug,name',
+            'services:id,slug,name', // 👈 many-to-many user <-> service
         ]);
+
+        // Normaliser les services pour le JSON
+        $serviceIds = method_exists($user, 'services')
+            ? $user->services->pluck('id')->map(fn($id) => (int)$id)->values()->all()
+            : [];
+
+        $servicesArr = method_exists($user, 'services')
+            ? $user->services->map(function ($s) {
+                return [
+                    'id'   => (int)$s->id,
+                    'slug' => $s->slug ?? null,
+                    'name' => $s->name ?? null,
+                ];
+            })->values()->all()
+            : [];
 
         Log::channel('security')->info('login.ok', [
             'user_id'    => $user->id,
@@ -129,6 +150,9 @@ class AuthController extends Controller
                 'roles'       => method_exists($user, 'getRoleNames') ? $user->getRoleNames() : [],
                 'permissions' => method_exists($user, 'getAllPermissions') ? $user->getAllPermissions()->pluck('name') : [],
                 'abilities'   => $abilities,
+                // 👇 important pour la caisse
+                'service_ids' => $serviceIds,
+                'services'    => $servicesArr,
                 'personnel'   => $user->personnel ? [
                     'id'          => $user->personnel->id,
                     'first_name'  => $user->personnel->first_name,
@@ -149,10 +173,26 @@ class AuthController extends Controller
     public function me(Request $request)
     {
         $u = $request->user();
+
         $u->load([
             'personnel:id,user_id,first_name,last_name,avatar_path,service_id',
             'personnel.service:id,slug,name',
+            'services:id,slug,name', // 👈 idem login
         ]);
+
+        $serviceIds = method_exists($u, 'services')
+            ? $u->services->pluck('id')->map(fn($id) => (int)$id)->values()->all()
+            : [];
+
+        $servicesArr = method_exists($u, 'services')
+            ? $u->services->map(function ($s) {
+                return [
+                    'id'   => (int)$s->id,
+                    'slug' => $s->slug ?? null,
+                    'name' => $s->name ?? null,
+                ];
+            })->values()->all()
+            : [];
 
         return response()->json([
             'id'               => $u->id,
@@ -162,6 +202,9 @@ class AuthController extends Controller
             'permissions'      => method_exists($u, 'getAllPermissions') ? $u->getAllPermissions()->pluck('name') : [],
             'abilities'        => $u->currentAccessToken()?->abilities ?? [],
             'token_expires_at' => optional($u->currentAccessToken()?->expires_at)->toIso8601String(),
+            // 👇 la caisse utilise ça pour allowedServiceIds
+            'service_ids'      => $serviceIds,
+            'services'         => $servicesArr,
             'personnel'        => $u->personnel ? [
                 'id'          => $u->personnel->id,
                 'first_name'  => $u->personnel->first_name,
@@ -184,10 +227,16 @@ class AuthController extends Controller
 
         $user->currentAccessToken()?->delete();
 
-        $isAdmin = method_exists($user, 'hasAnyRole') ? $user->hasAnyRole(['admin','dg','superuser']) : false; // ✅
+        $isAdmin = method_exists($user, 'hasAnyRole')
+            ? $user->hasAnyRole(['admin','dg','superuser'])
+            : false;
 
         if ($isAdmin) {
-            $abilities = ['*'];
+            $abilities = [
+                '*',
+                'caisse.report.view',
+                'caisse.report.export',
+            ];
         } else {
             $abilities = method_exists($user, 'getAllPermissions')
                 ? $user->getAllPermissions()
@@ -199,9 +248,9 @@ class AuthController extends Controller
 
             $abilities = $this->expandAbilities($abilities);
             $abilities = $this->ensureCaisseAbilities($abilities);
-            $abilities = $this->ensureCaisseAbilitiesFromRoles($user, $abilities);   // ✅
-            $abilities = $this->ensureReceptionAbilitiesFromRoles($user, $abilities); // ✅
-            $abilities = $this->ensureLookupsFromAbilities($abilities);              // ✅
+            $abilities = $this->ensureCaisseAbilitiesFromRoles($user, $abilities);
+            $abilities = $this->ensureReceptionAbilitiesFromRoles($user, $abilities);
+            $abilities = $this->ensureLookupsFromAbilities($abilities);
         }
 
         $expiresAt = now()->addHours(2);
@@ -233,9 +282,8 @@ class AuthController extends Controller
         ]);
     }
 
-    /**
-     * Ajoute des alias d’abilities pour éviter les 403
-     */
+    // ---------- Helpers abilities ----------
+
     protected function expandAbilities(array $abilities): array
     {
         $set = collect($abilities)->map(fn($a) => Str::of($a)->lower()->value());
@@ -280,9 +328,6 @@ class AuthController extends Controller
         return $set->unique()->values()->all();
     }
 
-    /**
-     * ✅ S’assure que les abilities “caisse.*” attendues par les middlewares sont présentes.
-     */
     protected function ensureCaisseAbilities(array $abilities): array
     {
         $set = collect($abilities)->map(fn($a) => Str::of($a)->lower()->value());
@@ -304,13 +349,11 @@ class AuthController extends Controller
         return $set->unique()->values()->all();
     }
 
-    /**
-     * ✅ Ajoute automatiquement les abilities caisse.* si l’utilisateur a le rôle caissier/cashier.
-     */
     protected function ensureCaisseAbilitiesFromRoles(\App\Models\User $user, array $abilities): array
     {
         try {
-            $isCashier = method_exists($user, 'hasAnyRole') && $user->hasAnyRole(['caissier','cashier','caissier_service','caissier_general','admin_caisse']);
+            $isCashier = method_exists($user, 'hasAnyRole')
+                && $user->hasAnyRole(['caissier','cashier','caissier_service','caissier_general','admin_caisse']);
         } catch (\Throwable $e) {
             $isCashier = false;
         }
@@ -321,15 +364,13 @@ class AuthController extends Controller
                 'caisse.session.view',
                 'caisse.session.manage',
                 'caisse.reglement.create',
+                // ⚠️ PAS de caisse.report.* ici, réservé à admin dans le bloc $isAdmin
             ]);
         }
 
         return collect($abilities)->map(fn($a) => strtolower($a))->unique()->values()->all();
     }
 
-    /**
-     * ✅ Si rôle réception, garantit patients/visites + lookups.
-     */
     protected function ensureReceptionAbilitiesFromRoles(\App\Models\User $user, array $abilities): array
     {
         try {
@@ -340,9 +381,8 @@ class AuthController extends Controller
 
         if ($isReception) {
             $abilities = array_merge($abilities, [
-                'patients.view','patients.read','patients.create','patients.update', // créer/lire
+                'patients.view','patients.read','patients.create','patients.update',
                 'visites.view','visites.read','visites.write',
-                // lookups utiles au front d’accueil :
                 'medecins.read','personnels.read','services.read','tarifs.read',
             ]);
         }
@@ -350,9 +390,6 @@ class AuthController extends Controller
         return collect($abilities)->map(fn($a) => strtolower($a))->unique()->values()->all();
     }
 
-    /**
-     * ✅ Ajoute automatiquement les lookups si l’utilisateur a déjà patients.* ou visites.*
-     */
     protected function ensureLookupsFromAbilities(array $abilities): array
     {
         $set = collect($abilities)->map(fn($a) => strtolower($a));
